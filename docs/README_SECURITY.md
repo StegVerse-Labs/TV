@@ -1,21 +1,22 @@
-# TV Security Model
+# TV Security Model (Expansion Pack)
 
-This repo uses a platform-agnostic trust design:
+This pack adds:
+- Hardened **Apply** workflow (signed exports with Sigstore/HMAC and append-only chainlog)
+- **Verify Integrity** workflow (auto-runs on Apply completion)
+- Updated scripts and schema for append-only verification trails
+- Tiered role templates (guardian, auditor, operator, public)
 
-- **No secrets required** to run core workflows. An unsigned/digest-only mode records `export_sha256` to the append-only `data/summary/chainlog.jsonl`.
-- **Optional HMAC** (`TV_HMAC_SIGNING_KEY`) enables signed exports without persistent keys in the repo.
-- **Sigstore keyless** uses GitHub OIDC (no long-lived secrets) when available.
-- **Importer push** is optional and gated by `TV_IMPORT_URL` + `TV_IMPORT_TOKEN`.
+## No secrets required
+All workflows run in digest-only mode if no secrets are configured. Add optional secrets later to upgrade security.
 
 ## Chainlog
-Each run appends:
-- `export_sha256` — content digest of `tv_export.json`
-- `sig_type` — `none`, `hmac_or_sigstore`, or `unknown`
-- `verified` — result from `tv_integrity_verify.py`
-- `verifier_id` — provenance of the verification step
-- `timestamp` — epoch seconds (UTC)
+`data/summary/chainlog.jsonl` appends one JSON per line with:
+- `kind`: `tv.apply` or `tv.verify`
+- `timestamp`: epoch seconds (UTC)
+- `export_sha256`: content digest of `tv_export.json`
+- `sig_type` (verify step): `none`, `hmac_or_sigstore`, or `unknown`
+- `verified` (verify step): heuristic based on signature presence
 
-`data/summary/chainlog.jsonl` is **append-only** and committed by CI.
-
-## Roles
-Roles in `roles_templates/` define coarse-grained permissions and TTLs (guardian, auditor, operator, public). Modules can add their own role templates.
+## Workflows
+- `.github/workflows/tv_apply_sigstore.yml`
+- `.github/workflows/tv_verify_integrity.yml`

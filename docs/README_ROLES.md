@@ -1,8 +1,8 @@
 # Role Tiers
 
-- **guardian** — root authority for TV (signing, rotation, role management)
+- **guardian** — root authority for TV (sign, rotate keys, manage roles)
 - **auditor** — read-only + verify/report
 - **operator** — apply/import workflows
 - **public** — view-only
 
-Customize constraints (audience, repositories, TTL) for your org.
+Edit constraints to match your org (audience, repos, TTL).
