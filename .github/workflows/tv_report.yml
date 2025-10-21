@@ -1,0 +1,39 @@
+name: TV Report (Audit Snapshot)
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "15 6 * * 1"  # weekly Monday 06:15 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml
+
+      - name: Generate audit report
+        run: |
+          python scripts/tv_generate_audit_report.py \
+            --manifest tv_manifest.yml \
+            --roles_dir roles_templates \
+            --out data/summary/tv_audit_report.json
+
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tv_audit_report
+          path: data/summary/tv_audit_report.json
