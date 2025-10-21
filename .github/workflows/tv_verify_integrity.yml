@@ -2,6 +2,11 @@ name: TV Verify Integrity
 
 on:
   workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why are you running verify?"
+        required: false
+        default: "manual"
   workflow_run:
     workflows: ["TV Apply (Signed Export via Sigstore/HMAC)"]
     types: [completed]
