@@ -1,0 +1,10 @@
+role: auditor
+version: 1
+description: Read-only audit and verify access
+permissions:
+  - tv:read
+  - tv:verify
+  - tv:report
+constraints:
+  audience: stegverse-tv
+ttl_days: 14
