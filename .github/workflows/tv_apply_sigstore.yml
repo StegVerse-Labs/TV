@@ -92,11 +92,12 @@ jobs:
             ${{ env.CHAINLOG_PATH }}
 
       - name: Push to TV importer (optional)
-        if: ${{ (secrets.TV_IMPORT_URL || '') != '' && (secrets.TV_IMPORT_TOKEN || '') != '' }}
         env:
           TV_IMPORT_URL: ${{ secrets.TV_IMPORT_URL }}
           TV_IMPORT_TOKEN: ${{ secrets.TV_IMPORT_TOKEN }}
+        if: env.TV_IMPORT_URL != '' && env.TV_IMPORT_TOKEN != ''
         run: |
+          echo "Pushing signed export to TV importer..."
           curl -sS -X POST "${TV_IMPORT_URL}" \
             -H "Authorization: Bearer ${TV_IMPORT_TOKEN}" \
             -H "Content-Type: application/json" \
