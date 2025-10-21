@@ -1,0 +1,32 @@
+name: Policy Lint (OPA/Rego)
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "roles_templates/**"
+      - "policy/opa/**"
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install conftest
+        run: |
+          CONFTEST_VERSION="0.53.0"
+          curl -sL -o conftest.tar.gz https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz
+          tar -xzf conftest.tar.gz
+          sudo mv conftest /usr/local/bin/conftest
+          conftest version
+
+      - name: Lint role templates against OPA policies
+        run: conftest test roles_templates --policy policy/opa --all-namespaces
