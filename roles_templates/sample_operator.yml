@@ -1,6 +1,6 @@
 role: sample_operator
 version: 1
-description: Sample operator role for TV pipeline validation
+description: Minimal sample role for TV pipeline tests
 permissions:
   - tokens:read
   - tokens:list
