@@ -23,10 +23,14 @@ jobs:
       - name: Install conftest
         run: |
           CONFTEST_VERSION="0.53.0"
-          curl -sL -o conftest.tar.gz https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz
+          curl -sL -o conftest.tar.gz \
+            "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
           tar -xzf conftest.tar.gz
           sudo mv conftest /usr/local/bin/conftest
-          conftest version
+          echo "Conftest installed at: $(which conftest)"
+          conftest --help | head -n 5
 
       - name: Lint role templates against OPA policies
-        run: conftest test roles_templates --policy policy/opa --all-namespaces
+        run: |
+          echo "Running conftest on roles_templates/ using policy/opa/"
+          conftest test roles_templates --policy policy/opa --all-namespaces
