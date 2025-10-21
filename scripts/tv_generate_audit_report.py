@@ -1,86 +1,142 @@
 #!/usr/bin/env python3
-import json, os, sys, csv, io, datetime
+import argparse, json, csv, os, sys
+from datetime import datetime, timezone
 from pathlib import Path
 
-# Optional dependency: reportlab for PDF
-try:
-    from reportlab.lib.pagesizes import LETTER
-    from reportlab.pdfgen import canvas
-    from reportlab.lib.units import inch
-    HAVE_PDF = True
-except Exception as e:
-    HAVE_PDF = False
-
-CHAINLOG = Path("data/summary/chainlog.jsonl")
-REPORT_DIR = Path("reports")
-REPORT_DIR.mkdir(parents=True, exist_ok=True)
-
-now = datetime.datetime.utcnow()
-year, week, _ = now.isocalendar()
-stem = f"tv_audit_{year}-W{week:02d}"
-csv_path = REPORT_DIR / f"{stem}.csv"
-pdf_path = REPORT_DIR / f"{stem}.pdf"
-
-entries = []
-if CHAINLOG.exists():
-    with CHAINLOG.open("r", encoding="utf-8") as f:
+def load_chainlog(path):
+    entries = []
+    if not Path(path).exists():
+        return entries
+    with open(path, "r", encoding="utf-8") as f:
         for line in f:
+            line = line.strip()
+            if not line:
+                continue
             try:
                 entries.append(json.loads(line))
             except Exception:
-                pass
+                # tolerate corrupt lines but continue
+                continue
+    return entries
 
-# Basic stats
-total = len(entries)
-applies = sum(1 for e in entries if e.get("stage") == "apply")
-verifies = sum(1 for e in entries if e.get("stage") == "verify")
-last5 = entries[-5:] if total >= 5 else entries
+def summarize(entries):
+    out = {
+        "total_entries": len(entries),
+        "apply": 0,
+        "verify": 0,
+        "status_ok": 0,
+        "status_fail": 0,
+        "sig_sigstore": 0,
+        "sig_hmac": 0,
+        "first_ts": None,
+        "last_ts": None,
+    }
+    for e in entries:
+        action = e.get("action") or e.get("event") or ""
+        status = (e.get("status") or "").lower()
+        sigtype = (e.get("signature_type") or e.get("sig_type") or "").lower()
+        ts = e.get("timestamp") or e.get("time") or None
+        if action == "apply":
+            out["apply"] += 1
+        if action == "verify":
+            out["verify"] += 1
+        if status in ("ok","success","passed","valid","verified"):
+            out["status_ok"] += 1
+        elif status:
+            out["status_fail"] += 1
+        if sigtype == "sigstore":
+            out["sig_sigstore"] += 1
+        elif sigtype == "hmac":
+            out["sig_hmac"] += 1
+        if ts:
+            try:
+                dt = datetime.fromisoformat(ts.replace("Z","+00:00"))
+            except Exception:
+                dt = None
+            if dt:
+                if out["first_ts"] is None or dt < out["first_ts"]:
+                    out["first_ts"] = dt
+                if out["last_ts"] is None or dt > out["last_ts"]:
+                    out["last_ts"] = dt
+    # Render timestamps as ISO
+    if out["first_ts"]: out["first_ts"] = out["first_ts"].astimezone(timezone.utc).isoformat()
+    if out["last_ts"]: out["last_ts"] = out["last_ts"].astimezone(timezone.utc).isoformat()
+    return out
 
-# Write CSV snapshot
-with csv_path.open("w", newline="", encoding="utf-8") as f:
-    w = csv.writer(f)
-    w.writerow(["index","timestamp","stage","export_sha256","signature_kind","notes"])
-    for i, e in enumerate(entries):
-        w.writerow([i+1, e.get("timestamp",""), e.get("stage",""), e.get("export_sha256",""), e.get("signature_kind",""), e.get("notes","")])
+def write_csv(summary, mode, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
+    now = datetime.now(timezone.utc)
+    if mode == "daily":
+        stamp = now.strftime("%Y%m%d")
+        filename = f"tv_audit_daily_{stamp}.csv"
+    else:
+        stamp = f"{now.year}-{now.strftime('%W')}"
+        filename = f"tv_audit_{stamp}.csv"
+    out_path = Path(out_dir) / filename
+    # flat CSV
+    fields = ["period","total_entries","apply","verify","status_ok","status_fail","sig_sigstore","sig_hmac","first_ts","last_ts"]
+    row = {
+        "period": filename.replace(".csv",""),
+        **summary
+    }
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        writer.writerow(row)
+    return str(out_path)
 
-print(f"Wrote CSV report to {csv_path}")
-
-# Write PDF (if reportlab available)
-if HAVE_PDF:
+def write_pdf(summary, csv_path, out_dir):
+    # optional PDF if reportlab is available
+    try:
+        from reportlab.lib.pagesizes import LETTER
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.units import inch
+    except Exception:
+        return None
+    os.makedirs(out_dir, exist_ok=True)
+    pdf_path = Path(out_dir) / (Path(csv_path).stem + ".pdf")
     c = canvas.Canvas(str(pdf_path), pagesize=LETTER)
     width, height = LETTER
-    x_margin, y_margin = 0.75*inch, 0.75*inch
-    y = height - y_margin
-
-    def line(txt, dy=14):
-        nonlocal y
-        c.drawString(x_margin, y, txt)
-        y -= dy
-
-    c.setTitle(f"TV Weekly Audit Report {stem}")
-    c.setFont("Helvetica-Bold", 16)
-    line("StegVerse Token Vault — Weekly Audit Report")
-    c.setFont("Helvetica", 10)
-    line(f"Generated (UTC): {now.isoformat()}")
-    line(f"Chainlog: {CHAINLOG}")
-    line("")
-    c.setFont("Helvetica-Bold", 12)
-    line("Summary")
-    c.setFont("Helvetica", 10)
-    line(f"Total chainlog entries: {total}")
-    line(f"Apply entries: {applies}")
-    line(f"Verify entries: {verifies}")
-    line("")
-
-    c.setFont("Helvetica-Bold", 12)
-    line("Most recent entries")
-    c.setFont("Helvetica", 9)
-    for e in last5[::-1]:
-        line(f"- {e.get('timestamp','?')} | stage={e.get('stage','?')} | sha256={e.get('export_sha256','')[:12]}… | signed={e.get('signature_kind','')}")
-
+    y = height - 1*inch
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(1*inch, y, "StegVerse Token Vault — Audit Report")
+    y -= 0.4*inch
+    c.setFont("Helvetica", 11)
+    for k in ["total_entries","apply","verify","status_ok","status_fail","sig_sigstore","sig_hmac","first_ts","last_ts"]:
+        c.drawString(1*inch, y, f"{k}: {summary.get(k)}")
+        y -= 0.25*inch
+    c.drawString(1*inch, y, f"CSV: {os.path.basename(csv_path)}")
     c.showPage()
     c.save()
-    print(f"Wrote PDF report to {pdf_path}")
-else:
-    print("reportlab not available; PDF not generated. CSV still created.")
+    return str(pdf_path)
 
+def write_summary_json(summary, csv_path, pdf_path, out_dir):
+    path = Path(out_dir) / (Path(csv_path).stem + "_summary.json")
+    data = {
+        "csv": os.path.basename(csv_path),
+        "pdf": os.path.basename(pdf_path) if pdf_path else None,
+        **summary
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    return str(path)
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--chainlog", default="data/summary/chainlog.jsonl")
+    ap.add_argument("--out_dir", default="reports")
+    ap.add_argument("--mode", choices=["weekly","daily"], default="weekly")
+    ap.add_argument("--no_pdf", action="store_true")
+    args = ap.parse_args()
+
+    entries = load_chainlog(args.chainlog)
+    summary = summarize(entries)
+    csv_path = write_csv(summary, args.mode, args.out_dir)
+    pdf_path = None
+    if not args.no_pdf:
+        pdf_path = write_pdf(summary, csv_path, args.out_dir)
+    summary_path = write_summary_json(summary, csv_path, pdf_path, args.out_dir)
+    print(json.dumps({"csv": csv_path, "pdf": pdf_path, "summary": summary_path, **summary}, indent=2))
+
+if __name__ == "__main__":
+    main()
