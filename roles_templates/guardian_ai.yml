@@ -1,14 +1,13 @@
-roles:
-  tv/ai/guardian:
-    description: "Guardian AI: rotates keys, audits usage, synthesizes policies."
-    ttl_minutes: 15
-    permissions:
-      kv:read:
-        - "*"
-      kv:write:
-        - "policy/*"
-        - "rotation/*"
-      actions:
-        - rotate_keys
-        - create_role
-        - revoke_token
+role: guardian
+version: 1
+description: Root authority for Token Vault (TV)
+permissions:
+  - tv:sign
+  - tv:rotate_keys
+  - tv:manage_roles
+  - tv:verify
+constraints:
+  audience: stegverse-tv
+  repositories:
+    - StegVerse/*
+ttl_days: 3
