@@ -1,2 +1,4 @@
 {"export_sha256": "fef22dad0121579f1b29d580bf00d32788975907d4470b844fd128c7c2d570ce", "kind": "tv.apply", "timestamp": 1761073959}
 {"kind": "tv.verify", "timestamp": 1761073959, "export_sha256": "fef22dad0121579f1b29d580bf00d32788975907d4470b844fd128c7c2d570ce", "sig_type": "hmac_or_sigstore", "verified": true, "verifier_id": "tv_integrity_verify.py@repo"}
+{"export_sha256": "fef22dad0121579f1b29d580bf00d32788975907d4470b844fd128c7c2d570ce", "kind": "tv.apply", "timestamp": 1761086164}
+{"kind": "tv.verify", "timestamp": 1761086164, "export_sha256": "fef22dad0121579f1b29d580bf00d32788975907d4470b844fd128c7c2d570ce", "sig_type": "hmac_or_sigstore", "verified": true, "verifier_id": "tv_integrity_verify.py@repo"}
