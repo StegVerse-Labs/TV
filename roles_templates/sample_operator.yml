@@ -1,0 +1,9 @@
+role: sample_operator
+version: 1
+description: Sample operator role for TV pipeline validation
+permissions:
+  - tokens:read
+  - tokens:list
+constraints:
+  audience: stegverse-tv
+ttl_days: 7
