@@ -1,1 +1,14 @@
 roles:
+  tv/ai/guardian:
+    description: "Guardian AI: rotates keys, audits usage, synthesizes policies."
+    ttl_minutes: 15
+    permissions:
+      kv:read:
+        - "*"
+      kv:write:
+        - "policy/*"
+        - "rotation/*"
+      actions:
+        - rotate_keys
+        - create_role
+        - revoke_token
