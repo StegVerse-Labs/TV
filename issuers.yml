@@ -1,0 +1,11 @@
+github_oidc:
+  issuer: "https://token.actions.githubusercontent.com"
+  audience: "stegverse-tv"
+  bindings:
+    - match:
+        org: "StegVerse"
+        repo: "FREE-DOM"
+        workflow: "auto_update_tv_patch.yml"
+        branch: "main"
+      allow_roles:
+        - "free-dom/ci/auto-update"

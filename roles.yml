@@ -1,0 +1,16 @@
+roles:
+  free-dom/ci/auto-update:
+    description: "CI job that merges pending data, builds badges, validates."
+    ttl_minutes: 30
+    permissions:
+      kv:read:
+        - secure_submission_url
+        - private_store_endpoint
+        - osint/*
+
+  free-dom/dev/min:
+    description: "Local dev read-only for minimal testing."
+    ttl_minutes: 60
+    permissions:
+      kv:read:
+        - secure_submission_url
