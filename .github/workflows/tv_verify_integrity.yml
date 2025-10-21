@@ -53,6 +53,7 @@ jobs:
             --roles_dir roles_templates \
             --out "$EXPORT_PATH"
           echo "{}" > "$SIGN_PATH"
+        fi
 
       - name: Verify bundle and append verification entry
         run: |
