@@ -3,7 +3,7 @@ name: TV Apply (Signed Export via Sigstore/HMAC)
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 6 * * *"
+    - cron: "0 6 * * *"   # daily 06:00 UTC
 
 permissions:
   contents: read
@@ -17,7 +17,7 @@ env:
 jobs:
   apply:
     runs-on: ubuntu-latest
-    # comment out if you don't have this environment defined
+    # comment this if you don't have an environment named 'restricted'
     environment: restricted
 
     steps:
@@ -51,23 +51,20 @@ jobs:
             --out "$EXPORT_PATH"
           test -s "$EXPORT_PATH" && echo "Export built ✅" || (echo "Export missing ❌"; exit 1)
 
-      - name: Install cosign (Sigstore)
+      - name: Install cosign (Sigstore, keyless)
         shell: bash
         run: |
           COSIGN_VERSION="2.4.1"
-          curl -sL -o cosign "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
-          chmod +x cosign
-          sudo mv cosign /usr/local/bin/cosign
+          curl -sSL -o cosign "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          chmod +x cosign && sudo mv cosign /usr/local/bin/cosign
           cosign version || true
 
-      - name: Sign export (Sigstore or HMAC, fallback to placeholder)
+      - name: Sign export (Sigstore or HMAC; fallback to placeholder)
         env:
           TV_HMAC_SIGNING_KEY: ${{ secrets.TV_HMAC_SIGNING_KEY }}
         run: |
           set +e
-          python scripts/tv_sign_export_cosign.py \
-            --in "$EXPORT_PATH" \
-            --out "$SIGN_PATH"
+          python scripts/tv_sign_export_cosign.py --in "$EXPORT_PATH" --out "$SIGN_PATH"
           rc=$?
           if [ $rc -ne 0 ] || [ ! -s "$SIGN_PATH" ]; then
             echo "Signing unavailable; writing placeholder signature."
@@ -98,7 +95,7 @@ jobs:
         if: env.TV_IMPORT_URL != '' && env.TV_IMPORT_TOKEN != ''
         run: |
           echo "Pushing signed export to TV importer..."
-          curl -sS -X POST "${TV_IMPORT_URL}" \
+          curl --fail -sS -X POST "${TV_IMPORT_URL}" \
             -H "Authorization: Bearer ${TV_IMPORT_TOKEN}" \
             -H "Content-Type: application/json" \
             --data-binary @"$EXPORT_PATH" | tee /tmp/tv_apply_response.json
