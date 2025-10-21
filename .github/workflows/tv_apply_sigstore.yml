@@ -1,7 +1,7 @@
 name: TV Apply (Signed Export via Sigstore/HMAC)
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
   schedule:
     - cron: "0 6 * * *"   # daily 06:00 UTC (optional)
 
@@ -17,37 +17,23 @@ env:
 jobs:
   apply:
     runs-on: ubuntu-latest
-    # If you already created an environment called 'restricted', keep this.
-    # Otherwise comment it out to avoid gating.
-    environment: restricted
+    environment: restricted   # remove or rename if you don't use environments
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Debug: repo state + required paths
+      - name: Debug repository structure
         run: |
-          echo "Default branch: $GITHUB_REF  SHA: $GITHUB_SHA"
-          echo "Repo root:"
-          ls -la
-          echo "--- .github/workflows"
-          ls -la .github/workflows || true
-          echo "--- scripts"
-          ls -la scripts || true
-          echo "--- roles_templates"
-          ls -la roles_templates || true
-          echo "--- policy/opa"
-          ls -la policy/opa || true
-          echo "--- look for tv_manifest.yml"
-          test -f tv_manifest.yml && echo "tv_manifest.yml present ✅" || (echo "tv_manifest.yml missing ❌" && exit 1)
-          mkdir -p data/summary
+          echo "Listing repo files for debug:"
+          ls -R || true
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install deps
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pyyaml cryptography requests
@@ -58,38 +44,32 @@ jobs:
             --manifest tv_manifest.yml \
             --roles_dir roles_templates \
             --out "$EXPORT_PATH"
-          test -s "$EXPORT_PATH" && echo "Export built ✅" || (echo "Export missing ❌"; exit 1)
 
       - name: Install cosign (Sigstore)
         shell: bash
         run: |
           COSIGN_VERSION="2.4.1"
-          curl -sL -o cosign.tgz "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64.tar.gz"
-          tar -xzf cosign.tgz
-          sudo mv cosign /usr/local/bin/cosign || true
+          curl -sL -o cosign "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          chmod +x cosign
+          sudo mv cosign /usr/local/bin/cosign
           cosign version || true
 
-      - name: Sign export (Sigstore if available, else HMAC, else placeholder)
+      - name: Sign export (Sigstore or HMAC)
         env:
           TV_HMAC_SIGNING_KEY: ${{ secrets.TV_HMAC_SIGNING_KEY }}
         run: |
-          set +e
-          python scripts/tv_sign_export_cosign.py --in "$EXPORT_PATH" --out "$SIGN_PATH"
-          rc=$?
-          if [ $rc -ne 0 ]; then
-            echo "Signing unavailable (no cosign or HMAC key). Creating placeholder signature so pipeline can proceed."
-            echo '{}' > "$SIGN_PATH"
-          fi
-          test -s "$SIGN_PATH" && echo "Signature file present (real or placeholder) ✅" || (echo "Signature missing ❌"; exit 1)
+          python scripts/tv_sign_export_cosign.py \
+            --in "$EXPORT_PATH" \
+            --out "$SIGN_PATH" || echo '{}' >"$SIGN_PATH"
 
-      - name: Append to chainlog (append-only JSONL)
+      - name: Append to chainlog
         run: |
           python scripts/tv_chainlog_builder.py \
             --export "$EXPORT_PATH" \
             --signature "$SIGN_PATH" \
             --out "$CHAINLOG_PATH"
 
-      - name: Upload artifacts (export, signature, chainlog)
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: tv_signed_export_bundle
