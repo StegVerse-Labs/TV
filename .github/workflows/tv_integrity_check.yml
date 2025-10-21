@@ -1,0 +1,38 @@
+name: TV Integrity Check (Cross-Repo)
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout TV
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyyaml requests
+
+      - name: Verify linked repos reference TV (scaffold)
+        env:
+          TV_GH_TOKEN: ${{ secrets.TV_GH_TOKEN }}
+        run: |
+          python scripts/tv_integrity_verify.py \
+            --manifest tv_manifest.yml \
+            --out data/summary/tv_integrity_status.json
+
+      - name: Upload integrity status
+        uses: actions/upload-artifact@v4
+        with:
+          name: tv_integrity_status
+          path: data/summary/tv_integrity_status.json
