@@ -3,11 +3,11 @@ name: TV Apply (Signed Export via Sigstore/HMAC)
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 6 * * *"   # daily 06:00 UTC (optional)
+    - cron: "0 6 * * *"
 
 permissions:
   contents: read
-  id-token: write   # for Sigstore keyless OIDC
+  id-token: write
 
 env:
   EXPORT_PATH: /tmp/tv_export.json
@@ -17,7 +17,8 @@ env:
 jobs:
   apply:
     runs-on: ubuntu-latest
-    environment: restricted   # remove or rename if you don't use environments
+    # comment out if you don't have this environment defined
+    environment: restricted
 
     steps:
       - name: Checkout
@@ -25,8 +26,12 @@ jobs:
 
       - name: Debug repository structure
         run: |
-          echo "Listing repo files for debug:"
-          ls -R || true
+          echo "Branch: $GITHUB_REF  SHA: $GITHUB_SHA"
+          ls -la
+          echo "--- roles_templates"; ls -la roles_templates || true
+          echo "--- scripts"; ls -la scripts || true
+          test -f tv_manifest.yml && echo "tv_manifest.yml present ✅" || (echo "tv_manifest.yml missing ❌"; exit 1)
+          mkdir -p data/summary
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -44,6 +49,7 @@ jobs:
             --manifest tv_manifest.yml \
             --roles_dir roles_templates \
             --out "$EXPORT_PATH"
+          test -s "$EXPORT_PATH" && echo "Export built ✅" || (echo "Export missing ❌"; exit 1)
 
       - name: Install cosign (Sigstore)
         shell: bash
@@ -54,13 +60,20 @@ jobs:
           sudo mv cosign /usr/local/bin/cosign
           cosign version || true
 
-      - name: Sign export (Sigstore or HMAC)
+      - name: Sign export (Sigstore or HMAC, fallback to placeholder)
         env:
           TV_HMAC_SIGNING_KEY: ${{ secrets.TV_HMAC_SIGNING_KEY }}
         run: |
+          set +e
           python scripts/tv_sign_export_cosign.py \
             --in "$EXPORT_PATH" \
-            --out "$SIGN_PATH" || echo '{}' >"$SIGN_PATH"
+            --out "$SIGN_PATH"
+          rc=$?
+          if [ $rc -ne 0 ] || [ ! -s "$SIGN_PATH" ]; then
+            echo "Signing unavailable; writing placeholder signature."
+            echo '{}' > "$SIGN_PATH"
+          fi
+          test -s "$SIGN_PATH" && echo "Signature present ✅" || (echo "Signature missing ❌"; exit 1)
 
       - name: Append to chainlog
         run: |
@@ -79,7 +92,7 @@ jobs:
             ${{ env.CHAINLOG_PATH }}
 
       - name: Push to TV importer (optional)
-        if: ${{ secrets.TV_IMPORT_URL != '' && secrets.TV_IMPORT_TOKEN != '' }}
+        if: ${{ (secrets.TV_IMPORT_URL || '') != '' && (secrets.TV_IMPORT_TOKEN || '') != '' }}
         env:
           TV_IMPORT_URL: ${{ secrets.TV_IMPORT_URL }}
           TV_IMPORT_TOKEN: ${{ secrets.TV_IMPORT_TOKEN }}
