@@ -1,1 +1,8 @@
 roles:
+  stegcore/ci/build:
+    description: "StegCore build/release pipeline."
+    ttl_minutes: 30
+    permissions:
+      kv:read:
+        - registry/write_token
+        - deploy/target_url
