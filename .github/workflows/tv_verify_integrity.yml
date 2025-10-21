@@ -37,8 +37,8 @@ jobs:
           pip install cryptography pyyaml requests
 
       - name: Attempt to download Apply artifact (if exists)
-        continue-on-error: true
         id: download
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: tv_signed_export_bundle
@@ -53,7 +53,6 @@ jobs:
             --roles_dir roles_templates \
             --out "$EXPORT_PATH"
           echo "{}" > "$SIGN_PATH"
-        fi
 
       - name: Verify bundle and append verification entry
         run: |
@@ -69,7 +68,7 @@ jobs:
           git add "$CHAINLOG_PATH"
           git commit -m "TV: append verification result" || echo "No changes"
           git push || true
-          
+
       - name: Upload verified bundle
         uses: actions/upload-artifact@v4
         with:
