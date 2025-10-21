@@ -1,0 +1,8 @@
+role: public
+version: 1
+description: View-only subset of TV data
+permissions:
+  - tv:view
+constraints:
+  audience: stegverse-tv
+ttl_days: 1
