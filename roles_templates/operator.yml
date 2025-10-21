@@ -1,0 +1,9 @@
+role: operator
+version: 1
+description: Limited operational tasks for TV apply/import
+permissions:
+  - tv:read
+  - tv:apply
+constraints:
+  audience: stegverse-tv
+ttl_days: 7
