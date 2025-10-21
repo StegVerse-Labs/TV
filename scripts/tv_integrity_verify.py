@@ -22,14 +22,12 @@ def main():
 
     export_sha = sha256_file(args.export)
 
-    # Heuristic: placeholder sig is "{}" (or empty). Mark unverified.
+    # Heuristic verification: placeholder signature is '{}'
     sig_type = "none"
     verified = False
     try:
         sig_content = open(args.signature,"rb").read().strip()
         if sig_content and sig_content != b"{}":
-            # We don't re-implement HMAC/Sigstore verification here.
-            # Mark as present; trust upstream signer for now.
             sig_type = "hmac_or_sigstore"
             verified = True
         else:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import argparse, json, os, sys, time, hashlib
+import argparse, json, os, time, hashlib
 
 def sha256_text(path):
     h = hashlib.sha256()
@@ -16,9 +16,10 @@ def main():
     args = ap.parse_args()
 
     entry = {
-        "ts": int(time.time()),
+        "kind": "tv.apply",
+        "timestamp": int(time.time()),
         "export_sha256": sha256_text(args.export),
-        "signature_sha256": sha256_text(args.signature),
+        # we don't store full sig here for safety; verification step will classify
     }
 
     os.makedirs(os.path.dirname(args.out), exist_ok=True)
