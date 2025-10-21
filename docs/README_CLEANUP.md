@@ -1,9 +1,8 @@
 # TV Artifact Cleanup
 
-This workflow deletes old GitHub Actions **artifacts** to keep storage tidy.
+This workflow deletes old GitHub Actions **artifacts** to keep your private repo lean.
 
-- Default retention: **14 days**
-- Schedule: **weekly (Sun 05:30 UTC)**
-- Manual run supports overriding the retention window.
+- **Manual run**: choose `retain_days` (default 14).
+- **Scheduled**: Sundays 05:30 UTC.
 
-File: `.github/workflows/tv_artifact_cleanup.yml`
+Artifacts removed here do **not** touch your chainlog or reports.
