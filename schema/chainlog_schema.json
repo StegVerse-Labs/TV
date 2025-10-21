@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TV Chainlog Entry",
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string"
+    },
+    "timestamp": {
+      "type": "integer"
+    },
+    "export_sha256": {
+      "type": "string"
+    },
+    "sig_type": {
+      "type": "string"
+    },
+    "verified": {
+      "type": "boolean"
+    },
+    "verifier_id": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "timestamp",
+    "export_sha256"
+  ]
+}
