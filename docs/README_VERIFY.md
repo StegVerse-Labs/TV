@@ -1,17 +1,12 @@
-# TV Verify Integrity Workflow (Manual Run Fix)
+# TV Verify Integrity Workflow
 
-This version includes:
-- A **manual Run button** that appears even on iPhone/Safari.
-- Correct YAML syntax (fixed indentation at line 47).
-- Self-contained verification flow with no secrets required.
+Verifies the latest signed export and appends a verification entry into
+`data/summary/chainlog.jsonl`. Can be run manually (mobile-safe) or automatically
+after the Apply workflow finishes.
 
-## How to Trigger Manually
-1. Go to: https://github.com/StegVerse/TV/actions/workflows/tv_verify_integrity.yml
-2. Ensure the **main** branch is selected.
-3. Tap **Run workflow** at the top right.
-4. Confirm the default input ("manual").
-5. Watch it run in the Actions tab!
+## Manual Run
+1. Open: https://github.com/StegVerse/TV/actions/workflows/tv_verify_integrity.yml
+2. Select **main** branch → **Run workflow**.
 
----
-**Created for:** StegVerse / Token Vault Integrity Ops  
-**Last Updated:** Auto-generated fix for mobile run compatibility.
+If the Apply artifact isn’t available, this workflow **rebuilds the export locally**
+so verification + chainlog writing still proceed.
