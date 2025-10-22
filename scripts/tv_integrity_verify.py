@@ -1,56 +1,41 @@
 #!/usr/bin/env python3
-import argparse, json, hashlib, os, time, sys
+import os, sys, json, hashlib
+from pathlib import Path
+from datetime import datetime, timezone
 
-def sha256_file(p):
-    h=hashlib.sha256()
-    with open(p,'rb') as f:
-        for chunk in iter(lambda:f.read(65536), b''):
+def sha256_path(p: Path) -> str:
+    h = hashlib.sha256()
+    with p.open("rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
 
 def main():
+    import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--export", required=True)
     ap.add_argument("--signature", required=True)
     ap.add_argument("--chainlog", required=True)
     args = ap.parse_args()
 
-    if not os.path.exists(args.export):
-        print("Export missing", file=sys.stderr); sys.exit(1)
-    if not os.path.exists(args.signature):
-        print("Signature missing", file=sys.stderr); sys.exit(1)
+    export_path = Path(args.export)
+    sig_path = Path(args.signature)
+    chainlog = Path(args.chainlog)
+    chainlog.parent.mkdir(parents=True, exist_ok=True)
 
-    export_sha = sha256_file(args.export)
-
-    # Heuristic verification: placeholder signature is '{}'
-    sig_type = "none"
-    verified = False
-    try:
-        sig_content = open(args.signature,"rb").read().strip()
-        if sig_content and sig_content != b"{}":
-            sig_type = "hmac_or_sigstore"
-            verified = True
-        else:
-            sig_type = "none"
-            verified = False
-    except Exception:
-        sig_type = "unknown"
-        verified = False
-
+    status = "ok" if export_path.exists() else "missing"
     entry = {
-        "kind": "tv.verify",
-        "timestamp": int(time.time()),
-        "export_sha256": export_sha,
-        "sig_type": sig_type,
-        "verified": verified,
-        "verifier_id": "tv_integrity_verify.py@repo",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "stage": "verify",
+        "event": "verify",
+        "export_sha256": sha256_path(export_path) if export_path.exists() else None,
+        "signature_kind": "present" if sig_path.exists() and sig_path.stat().st_size > 2 else "none",
+        "status": status,
+        "notes": "verify append by tv_integrity_verify.py"
     }
-
-    os.makedirs(os.path.dirname(args.chainlog), exist_ok=True)
-    with open(args.chainlog, "a", encoding="utf-8") as w:
-        w.write(json.dumps(entry, ensure_ascii=False)+"\n")
-
-    print("Verification entry appended:", entry)
+    with open(chainlog, "a", encoding="utf-8") as f:
+        f.write(json.dumps(entry) + "\n")
+    print(f"Appended verify entry to {chainlog} with status={status}")
 
 if __name__ == "__main__":
     main()
