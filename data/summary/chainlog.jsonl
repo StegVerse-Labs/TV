@@ -1,0 +1,2 @@
+{"timestamp": "2025-10-22T08:07:26.255349+00:00", "stage": "apply", "event": "apply", "export_sha256": "2c242b3fc29d7228c048d4851b586b0b1cbf82819d47e7ded417308a6762f8ff", "signature_kind": "present", "status": "ok", "notes": "apply/append by tv_chainlog_builder.py"}
+{"timestamp": "2025-10-22T08:07:26.299576+00:00", "stage": "verify", "event": "verify", "export_sha256": "2c242b3fc29d7228c048d4851b586b0b1cbf82819d47e7ded417308a6762f8ff", "signature_kind": "present", "status": "ok", "notes": "verify append by tv_integrity_verify.py"}
