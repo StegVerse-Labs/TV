@@ -1,9 +1,4 @@
-role: sample_operator
-version: 1
-description: Minimal sample role for TV pipeline tests
-permissions:
-  - tokens:read
-  - tokens:list
-constraints:
-  audience: stegverse-tv
-ttl_days: 7
+role: operator
+scopes:
+  - read
+  - write
