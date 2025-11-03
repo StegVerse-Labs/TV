@@ -1,1 +1,9 @@
-roles:
+name: guardian_ai
+description: Guardian AI supervisory role
+scopes:
+  - policy:read
+  - policy:validate
+  - audit:read
+  - audit:write
+constraints:
+  env: ["prod"]
