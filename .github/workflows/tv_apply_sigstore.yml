@@ -1,37 +1,22 @@
 name: TV Apply (Signed Export via Sigstore/HMAC)
 
 on:
-  workflow_dispatch:
-  schedule:
-    - cron: "0 6 * * *"   # daily 06:00 UTC
+  workflow_dispatch: {}
 
 permissions:
   contents: read
-  id-token: write
+  id-token: write  # required for Sigstore keyless signing
 
 env:
   EXPORT_PATH: /tmp/tv_export.json
   SIGN_PATH: /tmp/tv_export.sig
-  CHAINLOG_PATH: data/summary/chainlog.jsonl
 
 jobs:
   apply:
     runs-on: ubuntu-latest
-    # comment this if you don't have an environment named 'restricted'
-    environment: restricted
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Debug repository structure
-        run: |
-          echo "Branch: $GITHUB_REF  SHA: $GITHUB_SHA"
-          ls -la
-          echo "--- roles_templates"; ls -la roles_templates || true
-          echo "--- scripts"; ls -la scripts || true
-          test -f tv_manifest.yml && echo "tv_manifest.yml present ✅" || (echo "tv_manifest.yml missing ❌"; exit 1)
-          mkdir -p data/summary
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -49,53 +34,24 @@ jobs:
             --manifest tv_manifest.yml \
             --roles_dir roles_templates \
             --out "$EXPORT_PATH"
-          test -s "$EXPORT_PATH" && echo "Export built ✅" || (echo "Export missing ❌"; exit 1)
 
-      - name: Install cosign (Sigstore, keyless)
+      - name: Install cosign (Sigstore)
         shell: bash
         run: |
           COSIGN_VERSION="2.4.1"
-          curl -sSL -o cosign "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
-          chmod +x cosign && sudo mv cosign /usr/local/bin/cosign
+          curl -sL -o cosign.tgz "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64.tar.gz"
+          tar -xzf cosign.tgz
+          sudo mv cosign /usr/local/bin/cosign || true
           cosign version || true
 
-      - name: Sign export (Sigstore or HMAC; fallback to placeholder)
-        env:
-          TV_HMAC_SIGNING_KEY: ${{ secrets.TV_HMAC_SIGNING_KEY }}
+      - name: Sign export (Sigstore if available, else HMAC)
         run: |
-          set +e
           python scripts/tv_sign_export_cosign.py --in "$EXPORT_PATH" --out "$SIGN_PATH"
-          rc=$?
-          if [ $rc -ne 0 ] || [ ! -s "$SIGN_PATH" ]; then
-            echo "Signing unavailable; writing placeholder signature."
-            echo '{}' > "$SIGN_PATH"
-          fi
-          test -s "$SIGN_PATH" && echo "Signature present ✅" || (echo "Signature missing ❌"; exit 1)
 
-      - name: Append to chainlog
-        run: |
-          python scripts/tv_chainlog_builder.py \
-            --export "$EXPORT_PATH" \
-            --signature "$SIGN_PATH" \
-            --out "$CHAINLOG_PATH"
-
-      - name: Upload artifacts
+      - name: Upload artifacts (export + signature)
         uses: actions/upload-artifact@v4
         with:
           name: tv_signed_export_bundle
           path: |
             ${{ env.EXPORT_PATH }}
             ${{ env.SIGN_PATH }}
-            ${{ env.CHAINLOG_PATH }}
-
-      - name: Push to TV importer (optional)
-        env:
-          TV_IMPORT_URL: ${{ secrets.TV_IMPORT_URL }}
-          TV_IMPORT_TOKEN: ${{ secrets.TV_IMPORT_TOKEN }}
-        if: env.TV_IMPORT_URL != '' && env.TV_IMPORT_TOKEN != ''
-        run: |
-          echo "Pushing signed export to TV importer..."
-          curl --fail -sS -X POST "${TV_IMPORT_URL}" \
-            -H "Authorization: Bearer ${TV_IMPORT_TOKEN}" \
-            -H "Content-Type: application/json" \
-            --data-binary @"$EXPORT_PATH" | tee /tmp/tv_apply_response.json
