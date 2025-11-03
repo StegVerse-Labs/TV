@@ -1,104 +1,23 @@
 name: TV Apply + Verify (Chained)
 
-on:
-  workflow_dispatch: {}
+on: { workflow_dispatch: {} }
 
 permissions:
   contents: write
-  id-token: write   # allow keyless Sigstore
-
-env:
-  EXPORT_PATH: /tmp/tv_export.json
-  SIGN_PATH: /tmp/tv_export.sig
-  CHAINLOG_PATH: data/summary/chainlog.jsonl
+  id-token: write
 
 jobs:
   apply_and_verify:
     runs-on: ubuntu-latest
-    environment: restricted
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Debug repo state
-        run: |
-          echo "Branch: $GITHUB_REF"
-          ls -la
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - name: Run Apply
+        uses: benc-uk/workflow-dispatch@v1
         with:
-          python-version: "3.11"
-
-      - name: Install Python deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install pyyaml cryptography requests
-
-      - name: Build export (manifest + roles)
-        run: |
-          python scripts/tv_build_signed_export.py \
-            --manifest tv_manifest.yml \
-            --roles_dir roles_templates \
-            --out "$EXPORT_PATH"
-
-      # ✅ Fixed Cosign installer (works for both binary & tar.gz releases)
-      - name: Install cosign (Sigstore, auto-detect)
-        shell: bash
-        run: |
-          set -euo pipefail
-          COSIGN_VERSION="2.4.1"
-          URL_BIN="https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
-          URL_TAR="https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64.tar.gz"
-
-          echo "Attempting binary download..."
-          if curl -fsSL -o cosign "$URL_BIN"; then
-            chmod +x cosign
-            sudo mv cosign /usr/local/bin/cosign
-          else
-            echo "Binary failed, attempting .tar.gz..."
-            curl -fsSL -o cosign.tgz "$URL_TAR"
-            tar -xzf cosign.tgz
-            sudo mv cosign /usr/local/bin/cosign
-          fi
-          cosign version || true
-
-      - name: Sign export (Sigstore or HMAC fallback)
-        env:
-          TV_HMAC_SIGNING_KEY: ${{ secrets.TV_HMAC_SIGNING_KEY }}
-        run: |
-          python scripts/tv_sign_export_cosign.py \
-            --in "$EXPORT_PATH" \
-            --out "$SIGN_PATH"
-
-      - name: Append to chainlog (apply)
-        run: |
-          python scripts/tv_chainlog_builder.py \
-            --export "$EXPORT_PATH" \
-            --signature "$SIGN_PATH" \
-            --out "$CHAINLOG_PATH"
-
-      - name: Verify bundle and append verification entry
-        run: |
-          python scripts/tv_integrity_verify.py \
-            --export "$EXPORT_PATH" \
-            --signature "$SIGN_PATH" \
-            --chainlog "$CHAINLOG_PATH"
-
-      - name: Commit updated chainlog
-        run: |
-          git config user.name "tv-bot"
-          git config user.email "tv-bot@users.noreply.github.com"
-          git add "$CHAINLOG_PATH"
-          git commit -m "TV: append verification result" || echo "No changes"
-          git push || true
-
-      - name: Upload verified bundle
-        uses: actions/upload-artifact@v4
+          workflow: TV Apply (Signed Export via Sigstore/HMAC)
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Run Verify
+        uses: benc-uk/workflow-dispatch@v1
         with:
-          name: tv_verified_bundle
-          path: |
-            ${{ env.EXPORT_PATH }}
-            ${{ env.SIGN_PATH }}
-            ${{ env.CHAINLOG_PATH }}
+          workflow: TV Verify Integrity
+          token: ${{ secrets.GITHUB_TOKEN }}
