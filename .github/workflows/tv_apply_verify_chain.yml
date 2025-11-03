@@ -3,7 +3,7 @@ name: TV Apply + Verify (Chained)
 on:
   workflow_dispatch: {}
   schedule:
-    - cron: "0 6 * * *"  # daily 06:00 UTC
+    - cron: "0 6 * * *"  # daily at 06:00 UTC
 
 permissions:
   contents: write
@@ -11,11 +11,11 @@ permissions:
 
 jobs:
   apply:
-    uses: ./.github/workflows/tv_apply_reusable.yml
+    uses: StegVerse/TV/.github/workflows/tv_apply_reusable.yml@main
 
   verify:
     needs: apply
-    uses: ./.github/workflows/tv_verify_reusable.yml
+    uses: StegVerse/TV/.github/workflows/tv_verify_reusable.yml@main
     with:
       export_path: /tmp/tv_export.json
       sign_path: /tmp/tv_export.sig
