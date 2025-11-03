@@ -1,8 +1,7 @@
-roles:
-  scw/ci/deploy:
-    description: "Smart Contract Writer deployment pipeline."
-    ttl_minutes: 30
-    permissions:
-      kv:read:
-        - chain/rpc_url
-        - chain/wallet_signer
+name: scw
+description: StegVerse SCW bridge
+scopes:
+  - bridge:read
+  - bridge:write
+constraints:
+  env: ["prod"]
