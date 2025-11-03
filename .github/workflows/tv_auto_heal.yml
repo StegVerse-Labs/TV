@@ -1,0 +1,46 @@
+name: TV Auto-Heal (C3)
+
+on:
+  workflow_run:
+    workflows: ["TV Apply (Signed Export via Sigstore/HMAC)", "TV Verify Integrity"]
+    types: [completed]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  auto_heal:
+    if: ${{ github.event.workflow_run.conclusion != 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Heal common issues
+        run: |
+          mkdir -p data/summary
+          test -s tv_manifest.yml || cat > tv_manifest.yml <<'YML'
+          version: 1
+          org: StegVerse
+          vault_name: TV
+          audience: stegverse-tv
+          modules: []
+          YML
+          echo "Healer touched base files if missing."
+
+      - name: Commit fixes
+        run: |
+          git config user.name "tv-healer"
+          git config user.email "tv-healer@users.noreply.github.com"
+          git add -A
+          git commit -m "TV Auto-Heal: fix base files" || echo "No changes"
+          git push || true
+
+      - name: Re-run chained Apply + Verify
+        uses: benc-uk/workflow-dispatch@v1
+        with:
+          workflow: TV Apply + Verify (Chained)
+          token: ${{ secrets.GITHUB_TOKEN }}
