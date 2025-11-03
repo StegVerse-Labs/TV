@@ -1,7 +1,7 @@
 name: TV Verify Integrity
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
   workflow_run:
     workflows: ["TV Apply (Signed Export via Sigstore/HMAC)"]
     types: [completed]
@@ -18,29 +18,27 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install cryptography pyyaml requests
 
-      - name: Attempt to download Apply artifact (if exists)
-        id: download
+      - name: Try download Apply artifacts
+        id: dl
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: tv_signed_export_bundle
           path: /tmp
 
-      - name: Fallback: rebuild export locally if artifact missing
-        if: steps.download.outcome != 'success'
+      - name: Fallback rebuild (no artifacts found)
+        if: steps.dl.outcome != 'success'
         run: |
           echo "Artifact not found; rebuilding export..."
           python scripts/tv_build_signed_export.py \
@@ -49,7 +47,7 @@ jobs:
             --out "$EXPORT_PATH"
           echo "{}" > "$SIGN_PATH"
 
-      - name: Verify bundle and append verification entry
+      - name: Verify bundle and append verification
         run: |
           python scripts/tv_integrity_verify.py \
             --export "$EXPORT_PATH" \
@@ -60,15 +58,6 @@ jobs:
         run: |
           git config user.name "tv-bot"
           git config user.email "tv-bot@users.noreply.github.com"
-          git add "$CHAINLOG_PATH" || true
+          git add "$CHAINLOG_PATH"
           git commit -m "TV: append verification result" || echo "No changes"
           git push || true
-
-      - name: Upload verified bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: tv_verified_bundle
-          path: |
-            ${{ env.EXPORT_PATH }}
-            ${{ env.SIGN_PATH }}
-            ${{ env.CHAINLOG_PATH }}
