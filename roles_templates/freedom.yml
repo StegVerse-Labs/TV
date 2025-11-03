@@ -1,9 +1,8 @@
-roles:
-  free-dom/ci/auto-update:
-    description: "FREE-DOM CI: merge pending data, rebuild summaries, validate."
-    ttl_minutes: 30
-    permissions:
-      kv:read:
-        - secure_submission_url
-        - private_store_endpoint
-        - osint/*
+name: freedom
+description: FREE-DOM repository integration role
+scopes:
+  - ingest:read
+  - ingest:write
+  - summary:build
+constraints:
+  env: ["prod","staging"]
