@@ -2,5 +2,19 @@ version: 1
 org: StegVerse
 vault_name: TV
 audience: stegverse-tv
+modules:
+  - name: stegcore
+    policy: roles_templates/stegcore.yml
+  - name: stegtalk
+    policy: roles_templates/stegtalk.yml
+  - name: scw
+    policy: roles_templates/scw.yml
+  - name: freedom
+    policy: roles_templates/freedom.yml
+  - name: guardian_ai
+    policy: roles_templates/guardian_ai.ymlversion: 1
+org: StegVerse
+vault_name: TV
+audience: stegverse-tv
 issuers: []
 modules: []
