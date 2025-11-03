@@ -1,12 +1,7 @@
 name: TV Verify Integrity
 
 on:
-  workflow_dispatch:
-    inputs:
-      reason:
-        description: "Why are you running verify?"
-        required: false
-        default: "manual"
+  workflow_dispatch: {}
   workflow_run:
     workflows: ["TV Apply (Signed Export via Sigstore/HMAC)"]
     types: [completed]
@@ -22,9 +17,9 @@ env:
 jobs:
   verify:
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -65,7 +60,7 @@ jobs:
         run: |
           git config user.name "tv-bot"
           git config user.email "tv-bot@users.noreply.github.com"
-          git add "$CHAINLOG_PATH"
+          git add "$CHAINLOG_PATH" || true
           git commit -m "TV: append verification result" || echo "No changes"
           git push || true
 
