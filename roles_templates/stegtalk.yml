@@ -1,8 +1,8 @@
-roles:
-  stegtalk/ci/build:
-    description: "StegTalk build pipeline (LLM-facing)."
-    ttl_minutes: 30
-    permissions:
-      kv:read:
-        - llm/provider_api_key
-        - llm/rate_limit_bucket
+name: stegtalk
+description: Messaging module role
+scopes:
+  - msg:send
+  - msg:read
+  - contacts:read
+constraints:
+  env: ["prod","staging"]
