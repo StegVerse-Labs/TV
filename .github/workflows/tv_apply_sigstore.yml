@@ -1,13 +1,13 @@
 name: TV Apply (Signed Export via Sigstore/HMAC)
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
   schedule:
-    - cron: "0 6 * * *"   # daily 06:00 UTC (optional)
+    - cron: "0 6 * * *"
 
 permissions:
   contents: read
-  id-token: write   # needed for Sigstore keyless OIDC
+  id-token: write
 
 env:
   EXPORT_PATH: /tmp/tv_export.json
@@ -17,18 +17,14 @@ env:
 jobs:
   apply:
     runs-on: ubuntu-latest
-    environment: restricted
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install Python deps
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install pyyaml cryptography requests
@@ -40,34 +36,21 @@ jobs:
             --roles_dir roles_templates \
             --out "$EXPORT_PATH"
 
-      # ✅ Fixed: Cosign installer that works for modern releases
-      - name: Install cosign (Sigstore, auto-detect)
+      - name: Install cosign (Sigstore, keyless)
         shell: bash
         run: |
-          set -euo pipefail
-          COSIGN_VERSION="2.4.1"
-          URL_BIN="https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
-          URL_TAR="https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64.tar.gz"
-
-          echo "Attempting binary download..."
-          if curl -fsSL -o cosign "$URL_BIN"; then
-            chmod +x cosign
-            sudo mv cosign /usr/local/bin/cosign
-          else
-            echo "Binary failed, attempting .tar.gz..."
-            curl -fsSL -o cosign.tgz "$URL_TAR"
-            tar -xzf cosign.tgz
-            sudo mv cosign /usr/local/bin/cosign
-          fi
+          COSIGN_VERSION="v2.4.1"
+          curl -sL -o /tmp/cosign.tgz \
+            "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64.tar.gz"
+          tar -C /tmp -xzf /tmp/cosign.tgz || (echo "tar failed"; file /tmp/cosign.tgz; exit 1)
+          sudo mv /tmp/cosign /usr/local/bin/cosign || true
           cosign version || true
 
-      - name: Sign export (Sigstore if available, else HMAC)
+      - name: Sign export (Sigstore or HMAC fallback)
         env:
           TV_HMAC_SIGNING_KEY: ${{ secrets.TV_HMAC_SIGNING_KEY }}
         run: |
-          python scripts/tv_sign_export_cosign.py \
-            --in "$EXPORT_PATH" \
-            --out "$SIGN_PATH"
+          python scripts/tv_sign_export_cosign.py --in "$EXPORT_PATH" --out "$SIGN_PATH"
 
       - name: Append to chainlog (apply)
         run: |
@@ -84,15 +67,3 @@ jobs:
             ${{ env.EXPORT_PATH }}
             ${{ env.SIGN_PATH }}
             ${{ env.CHAINLOG_PATH }}
-
-      - name: Push to TV importer (optional)
-        if: ${{ env.TV_IMPORT_URL != '' && env.TV_IMPORT_TOKEN != '' }}
-        env:
-          TV_IMPORT_URL: ${{ secrets.TV_IMPORT_URL }}
-          TV_IMPORT_TOKEN: ${{ secrets.TV_IMPORT_TOKEN }}
-        run: |
-          echo "Pushing signed export to TV importer..."
-          curl -sS -X POST "${TV_IMPORT_URL}" \
-            -H "Authorization: Bearer ${TV_IMPORT_TOKEN}" \
-            -H "Content-Type: application/json" \
-            --data-binary @"$EXPORT_PATH" | tee /tmp/tv_apply_response.json
