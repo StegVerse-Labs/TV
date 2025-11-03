@@ -1,24 +1,31 @@
-# 🧱 StegVerse Token Vault (TV)
+# Token Vault (TV) — StegVerse Core
 
-![TV Audit Status](docs/tv_status.svg)
+> **Bundle:** Option **C3** (Full Auto-Healing)
 
-**Token Vault (TV)** is the secure cryptographic backbone of the StegVerse ecosystem —  
-a self-verifying audit chain that ensures every change, credential, and transaction  
-remains *authentic, auditable, and sovereign*.
+This repository is the **policy + secret distribution hub** for StegVerse.
+It ships with **Apply → Verify → Auto-Heal** workflows, OPA/Rego lint/validation,
+and a signed export + append-only chainlog.
 
-TV is designed for AI-driven infrastructure and human governance alike — each workflow  
-signs, verifies, and logs its activity into an append-only `chainlog.jsonl`,  
-which in turn drives automated audit reports and the status badge above.
+## One-Minute Quickstart
+1. Commit this whole bundle (preserve folder paths).
+2. Go to **Actions → “TV Apply + Verify (Chained)” → Run workflow**.
+3. You should see green checks for:
+   - Build export, Sign (Sigstore/HMAC), Append to chainlog, Verify bundle.
+4. If a future run fails, **C3 Auto-Heal** kicks in, attempts a repair, and re-runs.
 
----
+**No secrets required** for default path.  
+Optional outbound push: set `TV_IMPORT_URL` + `TV_IMPORT_TOKEN` in repo **Settings → Secrets → Actions**.
 
-## 🚀 Quick Start (iPhone-Friendly)
+## Folders
+- `roles_templates/` — role policy templates for StegCore modules.
+- `scripts/` — Python utilities used by workflows.
+- `.github/workflows/` — CI (apply, verify, chain, lint, validate, auto-heal).
+- `data/summary/chainlog.jsonl` — append-only log (created on first run).
+- `tv_manifest.yml` — minimal seed manifest.
 
-### 1️⃣ One-Time Setup
-1. Commit this bundle to `main` (preserving all folder paths).
-2. Optional: Add your organization details in `tv_manifest.yml`:
-   ```yaml
-   version: 1
-   org: StegVerse
-   vault_name: TV
-   audience: stegverse-tv
+## Chain of Trust
+- Signing: **Sigstore Keyless** if available; else **HMAC** fallback.
+- Chainlog: stores SHA-256 of export + signature and workflow info.
+- Verify: recomputes digests and appends verification records.
+
+See `docs/README_TV_QUICKSTART.md` for details. 
