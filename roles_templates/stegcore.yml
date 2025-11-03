@@ -1,8 +1,10 @@
-roles:
-  stegcore/ci/build:
-    description: "StegCore build/release pipeline."
-    ttl_minutes: 30
-    permissions:
-      kv:read:
-        - registry/write_token
-        - deploy/target_url
+name: stegcore
+description: Base capabilities for StegCore services
+scopes:
+  - dataset:read
+  - dataset:write
+  - token:issue
+  - token:revoke
+  - audit:read
+constraints:
+  env: ["prod","staging"]
