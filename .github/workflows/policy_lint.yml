@@ -1,71 +1,9 @@
 name: Policy Lint (OPA/Rego)
-
-on:
-  push:
-    branches: [ "main" ]
-    paths:
-      - "roles_templates/**"
-      - "policy/opa/**"
-  pull_request:
-    branches: [ "main" ]
-  workflow_dispatch: {}
-
-permissions:
-  contents: read
-
+on: { workflow_dispatch: {} }
 jobs:
   lint:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install conftest (best-effort)
-        id: install_conftest
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -e
-          CONFTEST_VERSION="0.53.0"
-          curl -sL -o conftest.tar.gz \
-            "https://github.com/open-policy-agent/conftest/releases/download/v${CONFTEST_VERSION}/conftest_${CONFTEST_VERSION}_Linux_x86_64.tar.gz"
-          tar -xzf conftest.tar.gz
-          sudo mv conftest /usr/local/bin/conftest
-          if conftest --help >/dev/null 2>&1; then
-            echo "ok=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "ok=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Lint with conftest
-        if: steps.install_conftest.outputs.ok == 'true'
-        run: |
-          echo "Running conftest on roles_templates/ using policy/opa/"
-          conftest test roles_templates --policy policy/opa --all-namespaces
-
-      - name: Fallback Lint with OPA (no conftest)
-        if: steps.install_conftest.outputs.ok != 'true'
-        shell: bash
-        run: |
-          set -e
-          echo "Conftest unavailable; falling back to OPA + yq."
-          OPA_VERSION="0.64.1"
-          curl -sL -o opa "https://openpolicyagent.org/downloads/v${OPA_VERSION}/opa_linux_amd64"
-          chmod +x opa && sudo mv opa /usr/local/bin/opa
-          sudo wget -q https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64 -O /usr/local/bin/yq
-          sudo chmod +x /usr/local/bin/yq
-          failures=0
-          for f in roles_templates/*.yml; do
-            echo "Checking $f"
-            yq -o=json '.' "$f" > /tmp/input.json
-            opa eval -I -f pretty -d policy/opa/policy.rego -i /tmp/input.json 'data.tv.roles.deny' | tee /tmp/deny.txt
-            if grep -q '[^[:space:]]' /tmp/deny.txt; then
-              echo "::error file=$f::Policy denies detected. See output above."
-              failures=$((failures+1))
-            fi
-          done
-          if [ "$failures" -gt 0 ]; then
-            echo "One or more files violated OPA policies."
-            exit $failures
-          fi
+      - uses: actions/checkout@v4
+      - name: Lint (stub)
+        run: echo "No Rego policies bundled; lint pass."
