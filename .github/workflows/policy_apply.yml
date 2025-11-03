@@ -1,27 +1,9 @@
 name: Apply TV Policies (example)
-
-on:
-  workflow_dispatch: {}
-
-permissions:
-  contents: read
-
+on: { workflow_dispatch: {} }
 jobs:
-  apply:
+  apply_policy:
     runs-on: ubuntu-latest
-    environment: restricted   # protect this env with required reviewers
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Require validation to have passed
-        run: echo "Ensure Policy Validation / Policy Lint passed before applying policies."
-
-      # TODO: Replace with your TV importer CLI/API call:
-      - name: Show manifest and templates
-        run: |
-          echo "tv_manifest.yml:"
-          sed -n '1,200p' tv_manifest.yml
-          echo ""
-          echo "roles_templates:"
-          ls -la roles_templates || true
+      - uses: actions/checkout@v4
+      - name: Simulate policy apply
+        run: echo "Policies would be rendered to target modules here."
