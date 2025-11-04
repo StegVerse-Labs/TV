@@ -1,7 +1,6 @@
 name: One-Time: Repair/Replace TV Workflows
 
-on:
-  workflow_dispatch: {}
+on: { workflow_dispatch: {} }
 
 permissions:
   contents: write
