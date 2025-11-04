@@ -1,48 +1,20 @@
 name: TV Apply (Reusable)
 
 on:
-  workflow_call:
-    inputs:
-      manifest_path:
-        required: false
-        type: string
-        default: tv_manifest.yml
-      roles_dir:
-        required: false
-        type: string
-        default: roles_templates
-      export_path:
-        required: false
-        type: string
-        default: /tmp/tv_export.json
-      sign_path:
-        required: false
-        type: string
-        default: /tmp/tv_export.sig
-      chainlog_path:
-        required: false
-        type: string
-        default: data/summary/chainlog.jsonl
-    secrets:
-      TV_HMAC_SIGNING_KEY:
-        required: false
-      TV_IMPORT_URL:
-        required: false
-      TV_IMPORT_TOKEN:
-        required: false
-  workflow_dispatch: {}
+  workflow_call: {}
 
 permissions:
-  contents: write
+  contents: read
   id-token: write
+
+env:
+  EXPORT_PATH: /tmp/tv_export.json
+  SIGN_PATH: /tmp/tv_export.sig
+  CHAINLOG_PATH: data/summary/chainlog.jsonl
 
 jobs:
   apply:
     runs-on: ubuntu-latest
-    env:
-      EXPORT_PATH: ${{ inputs.export_path }}
-      SIGN_PATH: ${{ inputs.sign_path }}
-      CHAINLOG_PATH: ${{ inputs.chainlog_path }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -52,7 +24,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
+      - name: Install Python deps
         run: |
           python -m pip install --upgrade pip
           pip install pyyaml cryptography requests
@@ -60,27 +32,24 @@ jobs:
       - name: Build export (manifest + roles)
         run: |
           python scripts/tv_build_signed_export.py \
-            --manifest "${{ inputs.manifest_path }}" \
-            --roles_dir "${{ inputs.roles_dir }}" \
+            --manifest tv_manifest.yml \
+            --roles_dir roles_templates \
             --out "$EXPORT_PATH"
 
-      - name: Install cosign (Sigstore, keyless)
-        shell: bash
+      - name: Install cosign (Sigstore, single-binary)
         run: |
-          set -euo pipefail
           COSIGN_VERSION="2.4.1"
-          curl -sL -o cosign-linux-amd64 "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
-          chmod +x cosign-linux-amd64
-          sudo mv cosign-linux-amd64 /usr/local/bin/cosign
+          curl -sL -o /usr/local/bin/cosign "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          chmod +x /usr/local/bin/cosign
           cosign version || true
 
-      - name: Sign export (Sigstore if available, else HMAC)
+      - name: Sign export (Sigstore keyless or HMAC fallback)
         env:
           TV_HMAC_SIGNING_KEY: ${{ secrets.TV_HMAC_SIGNING_KEY }}
         run: |
           python scripts/tv_sign_export_cosign.py --in "$EXPORT_PATH" --out "$SIGN_PATH"
 
-      - name: Append to chainlog (append-only JSONL)
+      - name: Append to chainlog (apply)
         run: |
           python scripts/tv_chainlog_builder.py \
             --export "$EXPORT_PATH" \
@@ -95,14 +64,3 @@ jobs:
             ${{ env.EXPORT_PATH }}
             ${{ env.SIGN_PATH }}
             ${{ env.CHAINLOG_PATH }}
-
-      - name: Push to TV importer (optional)
-        if: ${{ secrets.TV_IMPORT_URL && secrets.TV_IMPORT_TOKEN }}
-        env:
-          TV_IMPORT_URL: ${{ secrets.TV_IMPORT_URL }}
-          TV_IMPORT_TOKEN: ${{ secrets.TV_IMPORT_TOKEN }}
-        run: |
-          curl -sS -X POST "${TV_IMPORT_URL}" \
-            -H "Authorization: Bearer ${TV_IMPORT_TOKEN}" \
-            -H "Content-Type: application/json" \
-            --data-binary @"$EXPORT_PATH" | tee /tmp/tv_apply_response.json
