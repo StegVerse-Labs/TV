@@ -1,7 +1,5 @@
 # Token Vault (TV) — StegVerse Core
 
-> **Bundle:** Option **C3** (Full Auto-Healing)
-
 This repository is the **policy + secret distribution hub** for StegVerse.
 It ships with **Apply → Verify → Auto-Heal** workflows, OPA/Rego lint/validation,
 and a signed export + append-only chainlog.
