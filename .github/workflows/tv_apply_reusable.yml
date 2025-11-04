@@ -36,14 +36,16 @@ jobs:
             --roles_dir roles_templates \
             --out "$EXPORT_PATH"
 
-      - name: Install cosign (Sigstore, single-binary)
+      # Robust cosign install (no tar/gzip issues)
+      - name: Install cosign (Sigstore)
+        shell: bash
         run: |
           COSIGN_VERSION="2.4.1"
           curl -sL -o /usr/local/bin/cosign "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
           chmod +x /usr/local/bin/cosign
           cosign version || true
 
-      - name: Sign export (Sigstore keyless or HMAC fallback)
+      - name: Sign export (Sigstore if available; else HMAC)
         env:
           TV_HMAC_SIGNING_KEY: ${{ secrets.TV_HMAC_SIGNING_KEY }}
         run: |
