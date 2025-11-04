@@ -2,6 +2,10 @@ version: 1
 org: StegVerse
 vault_name: TV
 audience: stegverse-tv
+
+# Optional: leave empty for now (Sigstore issuers can be added later)
+issuers: []
+
 modules:
   - name: stegcore
     policy: roles_templates/stegcore.yml
@@ -12,9 +16,4 @@ modules:
   - name: freedom
     policy: roles_templates/freedom.yml
   - name: guardian_ai
-    policy: roles_templates/guardian_ai.ymlversion: 1
-org: StegVerse
-vault_name: TV
-audience: stegverse-tv
-issuers: []
-modules: []
+    policy: roles_templates/guardian_ai.yml
