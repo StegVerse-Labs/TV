@@ -4,7 +4,7 @@ on:
   workflow_call: {}
 
 permissions:
-  contents: write
+  contents: read
   id-token: write
 
 env:
@@ -38,9 +38,11 @@ jobs:
 
       # Robust cosign install (no tar/gzip confusion)
       - name: Install cosign (Sigstore)
+        shell: bash
         run: |
           COSIGN_VERSION="2.4.1"
-          curl -sL -o /usr/local/bin/cosign "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          curl -sL -o /usr/local/bin/cosign \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
           chmod +x /usr/local/bin/cosign
           cosign version || true
 
@@ -65,14 +67,3 @@ jobs:
             ${{ env.EXPORT_PATH }}
             ${{ env.SIGN_PATH }}
             ${{ env.CHAINLOG_PATH }}
-
-      - name: Optional push to TV importer
-        if: ${{ env.TV_IMPORT_URL != '' && env.TV_IMPORT_TOKEN != '' }}
-        env:
-          TV_IMPORT_URL: ${{ secrets.TV_IMPORT_URL }}
-          TV_IMPORT_TOKEN: ${{ secrets.TV_IMPORT_TOKEN }}
-        run: |
-          curl -sS -X POST "${TV_IMPORT_URL}" \
-            -H "Authorization: Bearer ${TV_IMPORT_TOKEN}" \
-            -H "Content-Type: application/json" \
-            --data-binary @"$EXPORT_PATH" | tee /tmp/tv_apply_response.json
