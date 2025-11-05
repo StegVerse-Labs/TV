@@ -1,7 +1,7 @@
-name: TV Apply + Verify (Chained)
+name: TV Apply + Verify (Chained + Auto-Heal)
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: {}
   schedule:
     - cron: "0 6 * * *"   # daily 06:00 UTC
 
@@ -11,12 +11,49 @@ permissions:
 
 jobs:
   apply:
-    uses: StegVerse/TV/.github/workflows/tv_apply_reusable.yml@main
+    uses: ./.github/workflows/tv_apply_reusable.yml
 
   verify:
     needs: apply
-    uses: StegVerse/TV/.github/workflows/tv_verify_reusable.yml@main
+    uses: ./.github/workflows/tv_verify_reusable.yml
     with:
       export_path: /tmp/tv_export.json
       sign_path: /tmp/tv_export.sig
       chainlog_path: data/summary/chainlog.jsonl
+
+  auto_heal:
+    needs: verify
+    if: needs.verify.result == 'failure'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Revert last chainlog entry (append-only heal)
+        run: |
+          FILE="data/summary/chainlog.jsonl"
+          echo "Reverting last line in ${FILE}..."
+          tmp="$(mktemp)"
+          if [ -f "$FILE" ]; then
+            # keep everything except the last line
+            head -n -1 "$FILE" > "$tmp" || true
+            mv "$tmp" "$FILE"
+          fi
+          git config user.name "tv-auto-heal"
+          git config user.email "tv-auto-heal@users.noreply.github.com"
+          git add "$FILE" || true
+          git commit -m "TV Auto-Heal: revert last verification entry after failed verify" || echo "No changes"
+          git push || true
+
+      - name: Optional notify (webhook)
+        if: ${{ secrets.TV_WEBHOOK_URL != '' }}
+        env:
+          TV_WEBHOOK_URL: ${{ secrets.TV_WEBHOOK_URL }}
+        run: |
+          curl -sS -X POST -H "Content-Type: application/json" \
+            -d "{\"text\":\"TV auto-heal executed on failed verify in ${GITHUB_REPOSITORY}#${GITHUB_RUN_ID}\"}" \
+            "$TV_WEBHOOK_URL" || true
