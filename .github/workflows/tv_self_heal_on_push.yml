@@ -1,0 +1,20 @@
+name: TV Self-Heal on Push
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "**/*.yml"
+      - "**/*.yaml"
+      - "tv_manifest.yml"
+      - "roles_templates/**"
+      - "scripts/**"
+      - ".github/workflows/**"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  call_reusable:
+    uses: ./.github/workflows/tv_self_heal.yml
