@@ -2,10 +2,6 @@ version: 1
 org: StegVerse
 vault_name: TV
 audience: stegverse-tv
-
-# Optional: leave empty for now (Sigstore issuers can be added later)
-issuers: []
-
 modules:
   - name: stegcore
     policy: roles_templates/stegcore.yml
