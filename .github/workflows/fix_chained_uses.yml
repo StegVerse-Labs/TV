@@ -1,0 +1,88 @@
+name: One-Time: Fix chained uses paths
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure target file exists
+        run: |
+          FILE=".github/workflows/tv_apply_verify_chain.yml"
+          if [ ! -f "$FILE" ]; then
+            echo "::error file=$FILE::File not found"
+            exit 1
+          fi
+          echo "Found $FILE"
+
+      - name: Show BEFORE
+        run: |
+          echo "----- BEFORE -----"
+          nl -ba .github/workflows/tv_apply_verify_chain.yml | sed -n '1,140p' || true
+          echo "------------------"
+
+      - name: Patch uses: lines to owner/repo@ref form
+        shell: bash
+        run: |
+          FILE=".github/workflows/tv_apply_verify_chain.yml"
+
+          # Back up
+          cp "$FILE" "${FILE}.bak"
+
+          # Replace local reusable workflow paths with repo@ref
+          sed -i -E \
+            -e 's#uses:\s*\./\.github/workflows/tv_apply_reusable\.yml#uses: StegVerse/TV/.github/workflows/tv_apply_reusable.yml@main#g' \
+            -e 's#uses:\s*\./\.github/workflows/tv_verify_reusable\.yml#uses: StegVerse/TV/.github/workflows/tv_verify_reusable.yml@main#g' \
+            "$FILE"
+
+          # Report change status
+          if diff -u "${FILE}.bak" "$FILE" > /tmp/patch.diff; then
+            echo "No changes were needed."
+            cat /tmp/patch.diff || true
+          else
+            echo "Applied patch:"
+            cat /tmp/patch.diff || true
+          fi
+
+      - name: Validate YAML (quick sanity check)
+        run: |
+          python - <<'PY'
+          import sys, yaml, pathlib
+          p = pathlib.Path(".github/workflows/tv_apply_verify_chain.yml")
+          try:
+            yaml.safe_load(p.read_text())
+            print("YAML OK:", p)
+          except Exception as e:
+            print("YAML ERROR:", e)
+            sys.exit(1)
+          PY
+        env:
+          PIP_DISABLE_PIP_VERSION_CHECK: "1"
+        shell: bash
+
+      - name: Commit & push if changed
+        run: |
+          git config user.name  "tv-bot"
+          git config user.email "tv-bot@users.noreply.github.com"
+          if ! git diff --quiet; then
+            git add .github/workflows/tv_apply_verify_chain.yml
+            git commit -m "Fix: use repo-scoped reusable workflow calls (@main)"
+            git push
+          else
+            echo "Nothing to commit."
+          fi
+
+      - name: Show AFTER
+        run: |
+          echo "------ AFTER ------"
+          nl -ba .github/workflows/tv_apply_verify_chain.yml | sed -n '1,140p' || true
+          echo "-------------------"
