@@ -1,4 +1,4 @@
-name: TV Apply + Verify (Chained + Auto-Heal)
+name: TV Apply + Verify (Chained + Auto-Heal + Alerts)
 
 on:
   workflow_dispatch: {}
@@ -8,11 +8,14 @@ on:
 permissions:
   contents: write
   id-token: write
+  issues: write
 
 jobs:
+  # 1) Build + sign + append to chainlog (reusable)
   apply:
     uses: ./.github/workflows/tv_apply_reusable.yml
 
+  # 2) Verify + append verification entry (reusable)
   verify:
     needs: apply
     uses: ./.github/workflows/tv_verify_reusable.yml
@@ -21,12 +24,17 @@ jobs:
       sign_path: /tmp/tv_export.sig
       chainlog_path: data/summary/chainlog.jsonl
 
+  # 3) Auto-heal only when verify fails
   auto_heal:
     needs: verify
     if: needs.verify.result == 'failure'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      issues: write
+    # Load the optional webhook secret into ENV, then test ENV in `if:`
+    env:
+      TV_WEBHOOK_URL: ${{ secrets.TV_WEBHOOK_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,25 +43,58 @@ jobs:
 
       - name: Revert last chainlog entry (append-only heal)
         run: |
+          set -e
           FILE="data/summary/chainlog.jsonl"
-          echo "Reverting last line in ${FILE}..."
-          tmp="$(mktemp)"
-          if [ -f "$FILE" ]; then
-            # keep everything except the last line
-            head -n -1 "$FILE" > "$tmp" || true
-            mv "$tmp" "$FILE"
+          echo "Reverting last line in ${FILE} (append-only heal)..."
+          if [ -f "$FILE" ] && [ -s "$FILE" ]; then
+            lines=$(wc -l < "$FILE" | tr -d ' ')
+            if [ "$lines" -gt 1 ]; then
+              head -n $((lines-1)) "$FILE" > "$FILE.tmp"
+              mv "$FILE.tmp" "$FILE"
+            else
+              : > "$FILE"
+            fi
           fi
           git config user.name "tv-auto-heal"
           git config user.email "tv-auto-heal@users.noreply.github.com"
           git add "$FILE" || true
-          git commit -m "TV Auto-Heal: revert last verification entry after failed verify" || echo "No changes"
+          git commit -m "TV Auto-Heal: revert last verification entry after failed verify (run $GITHUB_RUN_ID)" || echo "No changes"
           git push || true
 
-- name: Optional notify (webhook)
-  if: env.TV_WEBHOOK_URL != ''
-  env:
-    TV_WEBHOOK_URL: ${{ secrets.TV_WEBHOOK_URL }}
+      - name: Echo fallback (no webhook configured)
+        if: env.TV_WEBHOOK_URL == ''
+        run: echo "No TV_WEBHOOK_URL secret set; skipping webhook notification."
+
+      - name: Notify webhook (optional)
+        if: env.TV_WEBHOOK_URL != ''
         run: |
+          msg="TV auto-heal executed after failed verify in ${GITHUB_REPOSITORY}#${GITHUB_RUN_ID}"
+          # simple JSON without extra deps
+          payload=$(printf '{"text":"%s"}' "${msg//\"/\\\"}")
           curl -sS -X POST -H "Content-Type: application/json" \
-            -d "{\"text\":\"TV auto-heal executed on failed verify in ${GITHUB_REPOSITORY}#${GITHUB_RUN_ID}\"}" \
+            --data "${payload}" \
             "$TV_WEBHOOK_URL" || true
+
+      - name: File a GitHub Issue with context
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const title = `TV auto-heal executed after failed verify (run ${process.env.GITHUB_RUN_ID})`;
+            const body = [
+              'The chained workflow detected a **failed verify** and executed auto-heal.',
+              '',
+              `**Run:** https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`,
+              `**SHA:** ${process.env.GITHUB_SHA}`,
+              `**Ref:** ${process.env.GITHUB_REF}`,
+              '',
+              'Auto-heal reverted the last line of `data/summary/chainlog.jsonl` and pushed back to `main`.',
+              '',
+              'Please review recent commits and re-run the chained workflow if appropriate.'
+            ].join('\n');
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body,
+              labels: ['tv','auto-heal','needs-review']
+            });
