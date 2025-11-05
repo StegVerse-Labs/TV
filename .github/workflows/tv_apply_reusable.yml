@@ -1,7 +1,6 @@
 name: TV Apply (Reusable)
-
 on:
-  workflow_call: {}
+  { workflow_call: {} }
 
 permissions:
   contents: read
