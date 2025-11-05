@@ -49,10 +49,10 @@ jobs:
           git commit -m "TV Auto-Heal: revert last verification entry after failed verify" || echo "No changes"
           git push || true
 
-      - name: Optional notify (webhook)
-        if: ${{ secrets.TV_WEBHOOK_URL != '' }}
-        env:
-          TV_WEBHOOK_URL: ${{ secrets.TV_WEBHOOK_URL }}
+- name: Optional notify (webhook)
+  if: env.TV_WEBHOOK_URL != ''
+  env:
+    TV_WEBHOOK_URL: ${{ secrets.TV_WEBHOOK_URL }}
         run: |
           curl -sS -X POST -H "Content-Type: application/json" \
             -d "{\"text\":\"TV auto-heal executed on failed verify in ${GITHUB_REPOSITORY}#${GITHUB_RUN_ID}\"}" \
