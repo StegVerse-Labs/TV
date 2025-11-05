@@ -1,0 +1,235 @@
+name: TV Self-Heal (Bootstrap)
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 6 * * *"         # daily 06:00 UTC
+  push:
+    paths:
+      - ".github/workflows/**"
+  workflow_run:
+    workflows:
+      - "TV Apply (Standalone)"
+      - "TV Apply + Verify (Chained)"
+      - "TV Verify Integrity"
+      - "Policy Validation"
+      - "Policy Lint (OPA/Rego)"
+    types: [completed]
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  heal:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Ensure workflows folder
+        run: mkdir -p .github/workflows
+
+      # ---------- Canonical: VERIFY (reusable) ----------
+      - name: Materialize tv_verify_reusable.yml (canonical)
+        shell: bash
+        run: |
+          cat > .github/workflows/tv_verify_reusable.yml <<'YML'
+          name: TV Verify (Reusable)
+          on:
+            workflow_call:
+              inputs:
+                export_path:  { type: string, required: false, default: /tmp/tv_export.json }
+                sign_path:    { type: string, required: false, default: /tmp/tv_export.sig }
+                chainlog_path:{ type: string, required: false, default: data/summary/chainlog.jsonl }
+
+          permissions: { contents: write }
+
+          jobs:
+            verify:
+              runs-on: ubuntu-latest
+              env:
+                EXPORT_PATH: ${{ inputs.export_path }}
+                SIGN_PATH:   ${{ inputs.sign_path }}
+                CHAINLOG_PATH: ${{ inputs.chainlog_path }}
+
+              steps:
+                - uses: actions/checkout@v4
+                - uses: actions/setup-python@v5
+                  with: { python-version: "3.11" }
+                - name: Install Python deps
+                  run: |
+                    python -m pip install --upgrade pip
+                    pip install cryptography pyyaml requests
+                - name: Try to download last Apply artifact (optional)
+                  id: dl
+                  continue-on-error: true
+                  uses: actions/download-artifact@v4
+                  with:
+                    name: tv_signed_export_bundle
+                    path: /tmp
+                - name: Fallback: rebuild export if artifact missing
+                  if: ${{ steps.dl.outcome != 'success' }}
+                  run: |
+                    echo "No artifact found; rebuilding export locally..."
+                    python scripts/tv_build_signed_export.py \
+                      --manifest tv_manifest.yml \
+                      --roles_dir roles_templates \
+                      --out "$EXPORT_PATH"
+                    echo "{}" > "$SIGN_PATH"
+                - name: Verify bundle & append verification entry
+                  run: |
+                    python scripts/tv_integrity_verify.py \
+                      --export "$EXPORT_PATH" \
+                      --signature "$SIGN_PATH" \
+                      --chainlog "$CHAINLOG_PATH"
+                - name: Commit updated chainlog (if changed)
+                  run: |
+                    git config user.name "tv-bot"
+                    git config user.email "tv-bot@users.noreply.github.com"
+                    git add "$CHAINLOG_PATH" || true
+                    git commit -m "TV: append verification result" || echo "No changes"
+                    git push || true
+                - name: Upload verified bundle
+                  uses: actions/upload-artifact@v4
+                  with:
+                    name: tv_verified_bundle
+                    path: |
+                      ${{ env.EXPORT_PATH }}
+                      ${{ env.SIGN_PATH }}
+                      ${{ env.CHAINLOG_PATH }}
+          YML
+
+      # ---------- Canonical: APPLY (reusable) ----------
+      - name: Materialize tv_apply_reusable.yml (canonical)
+        shell: bash
+        run: |
+          cat > .github/workflows/tv_apply_reusable.yml <<'YML'
+          name: TV Apply (Reusable)
+          on: { workflow_call: {} }
+
+          permissions:
+            contents: read
+            id-token: write
+
+          env:
+            EXPORT_PATH: /tmp/tv_export.json
+            SIGN_PATH:   /tmp/tv_export.sig
+            CHAINLOG_PATH: data/summary/chainlog.jsonl
+
+          jobs:
+            apply:
+              runs-on: ubuntu-latest
+              steps:
+                - uses: actions/checkout@v4
+                - uses: actions/setup-python@v5
+                  with: { python-version: "3.11" }
+                - name: Install Python deps
+                  run: |
+                    python -m pip install --upgrade pip
+                    pip install pyyaml cryptography requests
+                - name: Build export (manifest + roles)
+                  run: |
+                    python scripts/tv_build_signed_export.py \
+                      --manifest tv_manifest.yml \
+                      --roles_dir roles_templates \
+                      --out "$EXPORT_PATH"
+                - name: Install cosign (Sigstore)
+                  run: |
+                    COSIGN_VERSION="2.4.1"
+                    curl -sL -o /usr/local/bin/cosign \
+                      "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+                    chmod +x /usr/local/bin/cosign
+                    cosign version || true
+                - name: Sign export (Sigstore if available; else HMAC)
+                  env:
+                    TV_HMAC_SIGNING_KEY: ${{ secrets.TV_HMAC_SIGNING_KEY }}
+                  run: |
+                    python scripts/tv_sign_export_cosign.py --in "$EXPORT_PATH" --out "$SIGN_PATH"
+                - name: Append to chainlog (apply)
+                  run: |
+                    python scripts/tv_chainlog_builder.py \
+                      --export "$EXPORT_PATH" \
+                      --signature "$SIGN_PATH" \
+                      --out "$CHAINLOG_PATH"
+                - name: Upload artifacts (export, signature, chainlog)
+                  uses: actions/upload-artifact@v4
+                  with:
+                    name: tv_signed_export_bundle
+                    path: |
+                      ${{ env.EXPORT_PATH }}
+                      ${{ env.SIGN_PATH }}
+                      ${{ env.CHAINLOG_PATH }}
+          YML
+
+      # ---------- Canonical: CHAIN ----------
+      - name: Materialize tv_apply_verify_chain.yml (canonical)
+        shell: bash
+        run: |
+          cat > .github/workflows/tv_apply_verify_chain.yml <<'YML'
+          name: TV Apply + Verify (Chained)
+          on:
+            workflow_dispatch: {}
+            schedule: [ { cron: "0 6 * * *" } ]
+          permissions:
+            contents: write
+            id-token: write
+          jobs:
+            apply:
+              uses: StegVerse/TV/.github/workflows/tv_apply_reusable.yml@main
+            verify:
+              needs: apply
+              uses: StegVerse/TV/.github/workflows/tv_verify_reusable.yml@main
+              with:
+                export_path: /tmp/tv_export.json
+                sign_path:   /tmp/tv_export.sig
+                chainlog_path: data/summary/chainlog.jsonl
+          YML
+
+      # ---------- Optional: Auto-heal notifier (safe if-expression) ----------
+      - name: Ensure tv_auto_heal.yml (optional helper)
+        shell: bash
+        run: |
+          cat > .github/workflows/tv_auto_heal.yml <<'YML'
+          name: TV Auto-Heal (On Verify Failure)
+          on:
+            workflow_run:
+              workflows: ["TV Apply + Verify (Chained)"]
+              types: [completed]
+          permissions: { contents: write }
+          jobs:
+            heal_on_fail:
+              if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+              runs-on: ubuntu-latest
+              steps:
+                - uses: actions/checkout@v4
+                - name: Touch marker (no-op example)
+                  run: echo "$(date -u) auto-heal ping" >> data/summary/autoheal.log
+                - name: Commit marker
+                  run: |
+                    git config user.name "tv-bot"
+                    git config user.email "tv-bot@users.noreply.github.com"
+                    git add data/summary/autoheal.log || true
+                    git commit -m "Auto-heal: verify failed marker" || echo "No changes"
+                    git push || true
+                - name: Optional notify (webhook)
+                  env:
+                    TV_WEBHOOK_URL: ${{ secrets.TV_WEBHOOK_URL }}
+                  if: ${{ env.TV_WEBHOOK_URL != '' }}
+                  run: |
+                    curl -sS -X POST -H "Content-Type: application/json" \
+                      -d "{\"text\":\"TV auto-heal executed on failed verify in ${GITHUB_REPOSITORY}#${GITHUB_RUN_ID}\"}" \
+                      "$TV_WEBHOOK_URL" || true
+          YML
+
+      - name: Commit any fixes
+        run: |
+          git config user.name  "tv-bot"
+          git config user.email "tv-bot@users.noreply.github.com"
+          git add .github/workflows/tv_apply_reusable.yml \
+                  .github/workflows/tv_verify_reusable.yml \
+                  .github/workflows/tv_apply_verify_chain.yml \
+                  .github/workflows/tv_auto_heal.yml
+          git commit -m "Self-Heal: enforce canonical TV workflows" || echo "No changes"
+          git push || true
