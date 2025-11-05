@@ -1,17 +1,13 @@
 name: TV Apply + Verify (Chained)
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
   schedule:
     - cron: "0 6 * * *"   # daily 06:00 UTC
 
 permissions:
   contents: write
   id-token: write
-
-concurrency:
-  group: tv-apply-verify-${{ github.ref }}
-  cancel-in-progress: false
 
 jobs:
   apply:
@@ -22,5 +18,5 @@ jobs:
     uses: StegVerse/TV/.github/workflows/tv_verify_reusable.yml@main
     with:
       export_path: /tmp/tv_export.json
-      sign_path:   /tmp/tv_export.sig
+      sign_path: /tmp/tv_export.sig
       chainlog_path: data/summary/chainlog.jsonl
