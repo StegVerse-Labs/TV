@@ -1,17 +1,7 @@
-name: Token Vault Check
+name: Token Vault Check (SCW)
 
 on:
-  workflow_dispatch:
-    inputs:
-      namespace:
-        description: "Logical namespace to verify"
-        required: true
-        default: "stegcore"
-      deep:
-        description: "Deep check: attempt decrypt if ADMIN_TOKEN is available"
-        required: true
-        type: boolean
-        default: true
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -19,9 +9,6 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    env:
-      NS: ${{ inputs.namespace }}
-      DEEP: ${{ inputs.deep }}
 
     steps:
       - name: Checkout
@@ -35,110 +22,77 @@ jobs:
           python-version: "3.11"
 
       - name: Install crypto deps (for deep decrypt)
-        run: python -m pip install --upgrade pip cryptography
+        run: |
+          python -m pip install --upgrade pip
+          pip install cryptography
 
       - name: Verify vault structure + (optional) decrypt
         id: verify
         shell: bash
-        env:
-          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN || '' }}
         run: |
           set -euo pipefail
+
+          NS="SCW"
+          VAULT=".github/token_vault/${NS}"
+          ENC="${VAULT}/${NS}.enc"
+          META="${VAULT}/${NS}.meta.json"
+
+          mkdir -p "${VAULT}"
+
           python - <<'PY'
-          import os, json, base64, pathlib, sys
-          from pathlib import Path
+import os, json
+from pathlib import Path
+from cryptography.fernet import Fernet, InvalidToken
 
-          NS   = os.environ["NS"]
-          DEEP = os.environ["DEEP"].lower() == "true"
-          ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN","")
+ns = "SCW"
+vault = Path(".github") / "token_vault" / ns
+enc = vault / f"{ns}.enc"
+meta = vault / f"{ns}.meta.json"
 
-          root = Path(".")
-          vault_dir = root/".github"/"vault"
-          enc_path  = vault_dir/f"token_vault.{NS}.enc"
-          meta_path = vault_dir/f"token_vault.{NS}.meta.json"
+result = {
+    "namespace": ns,
+    "enc_exists": enc.exists(),
+    "meta_exists": meta.exists(),
+    "meta_valid_json": False,
+    "deep_checked": False,
+    "deep_ok": False,
+    "reason": "",
+}
 
-          out_dir = root/".github"/"autopatch_out"
-          out_dir.mkdir(parents=True, exist_ok=True)
-          out_path = out_dir/f"VAULT_CHECK_{NS}.json"
+if not result["enc_exists"] or not result["meta_exists"]:
+    result["reason"] = "missing enc or meta file"
+else:
+    try:
+        meta_data = json.loads(meta.read_text(encoding="utf-8"))
+        result["meta_valid_json"] = True
+        key = meta_data.get("fernet_key")
+        if not key:
+            result["reason"] = "meta.json missing 'fernet_key'"
+        else:
+            result["deep_checked"] = True
+            fer = Fernet(key.encode())
+            try:
+                payload = enc.read_bytes()
+                _ = fer.decrypt(payload)
+                result["deep_ok"] = True
+            except InvalidToken:
+                result["reason"] = "fernet decrypt failed (InvalidToken)"
+            except Exception as e:
+                result["reason"] = f"fernet decrypt error: {type(e).__name__}"
+    except Exception as e:
+        result["reason"] = f"meta.json parse error: {type(e).__name__}"
 
-          status = {
-            "namespace": NS,
-            "enc_exists": enc_path.exists(),
-            "meta_exists": meta_path.exists(),
-            "meta_valid_json": False,
-            "deep_checked": False,
-            "deep_ok": False,
-            "reason": None,
-          }
-
-          if not enc_path.exists() or not meta_path.exists():
-            status["reason"] = "missing enc or meta file"
-            out_path.write_text(json.dumps(status, indent=2), encoding="utf-8")
-            print(json.dumps(status, indent=2))
-            sys.exit(0)
-
-          try:
-            meta = json.loads(meta_path.read_text(encoding="utf-8"))
-            status["meta_valid_json"] = True
-          except Exception as e:
-            status["reason"] = f"meta JSON parse failed: {type(e).__name__}"
-            out_path.write_text(json.dumps(status, indent=2), encoding="utf-8")
-            print(json.dumps(status, indent=2))
-            sys.exit(0)
-
-          if not DEEP:
-            status["reason"] = "shallow check only"
-            out_path.write_text(json.dumps(status, indent=2), encoding="utf-8")
-            print(json.dumps(status, indent=2))
-            sys.exit(0)
-
-          if not ADMIN_TOKEN:
-            status["deep_checked"] = False
-            status["reason"] = "no ADMIN_TOKEN; cannot attempt decrypt"
-            out_path.write_text(json.dumps(status, indent=2), encoding="utf-8")
-            print(json.dumps(status, indent=2))
-            sys.exit(0)
-
-          # Deep decrypt attempt
-          from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
-          from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-          try:
-            salt  = base64.b64decode(meta["salt_b64"])
-            nonce = base64.b64decode(meta["nonce_b64"])
-          except Exception as e:
-            status["reason"] = f"meta salt/nonce decode failed: {type(e).__name__}"
-            out_path.write_text(json.dumps(status, indent=2), encoding="utf-8")
-            print(json.dumps(status, indent=2))
-            sys.exit(0)
-
-          enc = enc_path.read_bytes()
-          try:
-            kdf = Scrypt(salt=salt, length=32, n=2**14, r=8, p=1)
-            key = kdf.derive(ADMIN_TOKEN.encode())
-            aes = AESGCM(key)
-            plain = aes.decrypt(nonce, enc, associated_data=NS.encode())
-            # validate payload is JSON
-            payload = json.loads(plain.decode())
-            status["deep_checked"] = True
-            status["deep_ok"] = True
-            status["payload_keys"] = list(payload.keys())
-          except Exception as e:
-            status["deep_checked"] = True
-            status["deep_ok"] = False
-            status["reason"] = f"decrypt or JSON parse failed: {type(e).__name__}"
-
-          out_path.write_text(json.dumps(status, indent=2), encoding="utf-8")
-          print(json.dumps(status, indent=2))
-          PY
+out_path = vault / "check_result.json"
+out_path.write_text(json.dumps(result, indent=2), encoding="utf-8")
+print(json.dumps(result, indent=2))
+PY
 
       - name: Summary
         if: always()
         run: |
-          echo "## Token Vault Check" >> "$GITHUB_STEP_SUMMARY"
-          NS="${{ inputs.namespace }}"
-          FILE=".github/autopatch_out/VAULT_CHECK_${NS}.json"
-          if [ -f "$FILE" ]; then
-            cat "$FILE" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Token Vault Check (SCW)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f ".github/token_vault/SCW/check_result.json" ]; then
+            echo "Result file: \`.github/token_vault/SCW/check_result.json\`" >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "_No check summary written._" >> "$GITHUB_STEP_SUMMARY"
+            echo "No result file was written; see logs for details." >> "$GITHUB_STEP_SUMMARY"
