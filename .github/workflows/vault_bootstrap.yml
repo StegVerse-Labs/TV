@@ -1,22 +1,7 @@
-name: Token Vault Bootstrap
+name: Token Vault Bootstrap (SCW)
 
 on:
-  workflow_dispatch:
-    inputs:
-      namespace:
-        description: "Namespace (example: stegcore, stegtalk, scw)"
-        required: true
-      guardian_key:
-        description: "Optional static guardian key (leave blank to auto-generate)"
-        required: false
-      worker_key:
-        description: "Optional static worker key (leave blank to auto-generate)"
-        required: false
-      push_to_scw:
-        description: "Push clear vault to SCW /v1/vault/put?"
-        type: boolean
-        default: false
-        required: true
+  workflow_dispatch: {}
 
 permissions:
   contents: write
@@ -24,159 +9,116 @@ permissions:
 jobs:
   bootstrap:
     runs-on: ubuntu-latest
-    env:
-      NS: ${{ inputs.namespace }}
-      GUARDIAN: ${{ inputs.guardian_key }}
-      WORKER: ${{ inputs.worker_key }}
-      PUSH_TO_SCW: ${{ inputs.push_to_scw }}
 
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install crypto libraries
-        run: python -m pip install --upgrade cryptography
+      - name: Install crypto deps
+        run: python -m pip install --upgrade pip cryptography
 
-      - name: Bootstrap TokenVault namespace
+      - name: Bootstrap SCW token vault
         id: bootstrap
         env:
-          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN || '' }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import os, json, pathlib, secrets, base64, time
-          from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
-          from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+          python - << 'PY'
+          import base64, json, os, datetime
+          from pathlib import Path
+          from cryptography.fernet import Fernet
 
-          NS = os.environ["NS"]
-          ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN","")
-          GUARDIAN = os.environ.get("GUARDIAN","")
-          WORKER = os.environ.get("WORKER","")
+          NAMESPACE = "SCW"
+          SECRET_NAME = "SCW_VAULT_FERNET_KEY"
 
-          root = pathlib.Path(".github/vault")
-          root.mkdir(parents=True, exist_ok=True)
+          root = Path(".")
+          vault_dir = root / ".github" / "vault"
+          vault_dir.mkdir(parents=True, exist_ok=True)
 
-          if not ADMIN_TOKEN:
-            raise SystemExit("ADMIN_TOKEN missing in repo secrets — cannot bootstrap vault.")
+          enc_path = vault_dir / f"{NAMESPACE}.enc"
+          meta_path = vault_dir / f"{NAMESPACE}.meta.json"
 
-          # Generate logical keys if blank
-          if not GUARDIAN:
-            GUARDIAN = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
-          if not WORKER:
-            WORKER = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+          if enc_path.exists() or meta_path.exists():
+              status = {
+                  "namespace": NAMESPACE,
+                  "created": False,
+                  "reason": "enc or meta already exists",
+                  "enc_path": str(enc_path),
+                  "meta_path": str(meta_path),
+              }
+          else:
+              key = Fernet.generate_key()  # urlsafe base64-encoded 32 bytes
+              f = Fernet(key)
 
-          payload = {
-            "guardian_key": GUARDIAN,
-            "worker_key": WORKER,
-            "namespace": NS,
-            "created_utc": int(time.time()),
-            "version": 1
-          }
+              payload = {
+                  "namespace": NAMESPACE,
+                  "version": 1,
+                  "created_utc": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                  "tokens": {},
+              }
 
-          salt = secrets.token_bytes(16)
-          kdf = Scrypt(salt=salt, length=32, n=2**14, r=8, p=1)
-          key = kdf.derive(ADMIN_TOKEN.encode())
-          nonce = secrets.token_bytes(12)
+              token = f.encrypt(json.dumps(payload).encode("utf-8"))
 
-          aes = AESGCM(key)
-          ciphertext = aes.encrypt(nonce, json.dumps(payload,separators=(',',':')).encode(), associated_data=NS.encode())
+              enc_path.write_bytes(token)
 
-          (root/f"token_vault.{NS}.enc").write_bytes(ciphertext)
-          meta = {
-            "algo": "aes-256-gcm",
-            "kdf":  "scrypt(n=16384,r=8,p=1,len=32)",
-            "salt_b64": base64.b64encode(salt).decode(),
-            "nonce_b64": base64.b64encode(nonce).decode(),
-            "ns": NS,
-            "seed_source": "ADMIN_TOKEN",
-            "created_utc": int(time.time())
-          }
-          (root/f"token_vault.{NS}.meta.json").write_text(json.dumps(meta, indent=2))
+              meta = {
+                  "namespace": NAMESPACE,
+                  "version": 1,
+                  "created_utc": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                  "algorithm": "fernet",
+                  "key_secret_name": SECRET_NAME,
+                  "run_id": os.environ.get("GITHUB_RUN_ID"),
+              }
+              meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
-          summary = {
-            "namespace": NS,
-            "guardian_tail": GUARDIAN[-6:],
-            "worker_tail": WORKER[-6:],
-            "result": "bootstrap_complete"
-          }
-          pathlib.Path(".github/autopatch_out").mkdir(parents=True, exist_ok=True)
-          (pathlib.Path(".github/autopatch_out")/"VAULT_BOOTSTRAP_SUMMARY.json").write_text(json.dumps(summary, indent=2))
-          print(json.dumps(summary, indent=2))
+              status = {
+                  "namespace": NAMESPACE,
+                  "created": True,
+                  "enc_path": str(enc_path),
+                  "meta_path": str(meta_path),
+                  "key": key.decode("ascii"),
+                  "key_secret_name": SECRET_NAME,
+              }
+
+          status_path = vault_dir / f"{NAMESPACE}.bootstrap.status.json"
+          status_path.write_text(json.dumps(status, indent=2), encoding="utf-8")
+          print(json.dumps(status, indent=2))
           PY
 
-      - name: Commit bootstrap result
+      - name: Commit vault files
+        if: always()
         run: |
           set -euo pipefail
-          git add .github/vault || true
-          if ! git diff --cached --quiet; then
-            git config user.name "StegVerse Bot"
+          if git status --porcelain .github/vault | grep .; then
+            git config user.name  "StegVerse Bot"
             git config user.email "bot@stegverse.org"
-            git commit -m "vault: bootstrap namespace ${{ inputs.namespace }}"
+            git add .github/vault
+            git commit -m "chore(vault): bootstrap SCW token vault"
             git push origin HEAD:main
           else
-            echo "Nothing to commit."
-
-      - name: Optional push clear vault to SCW
-        if: ${{ inputs.push_to_scw == true }}
-        env:
-          NS: ${{ inputs.namespace }}
-          SCW_API_BASE: ${{ secrets.SCW_API_BASE || '' }}
-          SCW_ADMIN_TOKEN: ${{ secrets.SCW_ADMIN_TOKEN || '' }}
-          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN || '' }}
-        run: |
-          set -euo pipefail
-          if [ -z "${SCW_API_BASE}" ] || [ -z "${SCW_ADMIN_TOKEN}" ] || [ -z "${ADMIN_TOKEN}" ]; then
-            echo "Skipped — SCW env vars not present."
-            exit 0
+            echo "No vault changes to commit."
           fi
-
-          python - <<'PY'
-          import os, json, base64, pathlib
-          from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
-          from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-          import urllib.request
-
-          NS = os.environ["NS"]
-          root = pathlib.Path(".github/vault")
-          meta = json.loads((root/f"token_vault.{NS}.meta.json").read_text())
-          enc  = (root/f"token_vault.{NS}.enc").read_bytes()
-
-          ADMIN = os.environ["ADMIN_TOKEN"]
-
-          salt = base64.b64decode(meta["salt_b64"])
-          nonce= base64.b64decode(meta["nonce_b64"])
-          kdf  = Scrypt(salt=salt, length=32, n=2**14, r=8, p=1)
-          key  = kdf.derive(ADMIN.encode())
-          aes  = AESGCM(key)
-          plain = aes.decrypt(nonce, enc, associated_data=NS.encode())
-          payload = json.loads(plain.decode())
-
-          req = urllib.request.Request(
-            os.environ["SCW_API_BASE"].rstrip("/") + "/v1/vault/put",
-            data=json.dumps({"namespace": NS, "data": payload}).encode(),
-            headers={
-              "Content-Type": "application/json",
-              "Authorization": f"Bearer {os.environ['SCW_ADMIN_TOKEN']}"
-            }
-          )
-          try:
-            with urllib.request.urlopen(req) as r:
-              print("SCW push OK:", r.status)
-          except Exception as e:
-            print("SCW push FAILED:", e)
-          PY
 
       - name: Summary
         if: always()
         run: |
-          echo "## Token Vault Bootstrap" >> "$GITHUB_STEP_SUMMARY"
-          if [ -f ".github/autopatch_out/VAULT_BOOTSTRAP_SUMMARY.json" ]; then
-            cat ".github/autopatch_out/VAULT_BOOTSTRAP_SUMMARY.json" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Token Vault Bootstrap (SCW)" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f ".github/vault/SCW.bootstrap.status.json" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat ".github/vault/SCW.bootstrap.status.json" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "> If **created: true**, copy **key** from the JSON above" >> "$GITHUB_STEP_SUMMARY"
+            echo "> and store it as repository secret **SCW_VAULT_FERNET_KEY**." >> "$GITHUB_STEP_SUMMARY"
+            echo "> After saving the secret, you can run the vault check and rotate workflows." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "_No bootstrap summary._" >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "_No status file produced; see logs for details._" >> "$GITHUB_STEP_SUMMARY"
