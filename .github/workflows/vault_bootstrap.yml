@@ -1,0 +1,264 @@
+name: Token Vault Bootstrap
+
+on:
+  workflow_dispatch:
+    inputs:
+      namespace:
+        description: "Logical namespace (e.g. 'stegcore', 'stegtalk')"
+        required: true
+        default: "stegcore"
+      rotate:
+        description: "Rotate keys even if vault exists?"
+        required: true
+        type: boolean
+        default: false
+      push_to_scw:
+        description: "Also push clear keys to SCW API if SCW_API_BASE + SCW_ADMIN_TOKEN are set"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    env:
+      # Optional env/secret inputs:
+      # ADMIN_TOKEN          -> preferred seed to derive encryption key
+      # SCW_API_BASE         -> e.g. https://api.stegverse.io (optional)
+      # SCW_ADMIN_TOKEN      -> bearer for SCW POST (optional)
+      NS: ${{ inputs.namespace }}
+      ROTATE: ${{ inputs.rotate }}
+      PUSH_TO_SCW: ${{ inputs.push_to_scw }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      - name: Install crypto deps
+        run: python -m pip install --upgrade pip cryptography
+
+      - name: Bootstrap / Rotate Token Vault (encrypt to repo)
+        id: vault
+        shell: bash
+        env:
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN || '' }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p .github/vault
+          VAULT_JSON=".github/vault/token_vault.${NS}.json"
+          VAULT_ENC=".github/vault/token_vault.${NS}.enc"
+          VAULT_META=".github/vault/token_vault.${NS}.meta.json"
+          VAULT_README=".github/vault/README.md"
+
+          python - <<'PY'
+          import os, json, base64, secrets, time, pathlib, sys
+          from hashlib import sha256
+          from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+          from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+          NS   = os.environ["NS"]
+          ROT  = os.environ["ROTATE"].lower() == "true"
+          ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN","")
+          root = pathlib.Path(".")
+          vault_dir = root/".github"/"vault"
+          vault_dir.mkdir(parents=True, exist_ok=True)
+          plain_path = vault_dir/f"token_vault.{NS}.json"
+          enc_path   = vault_dir/f"token_vault.{NS}.enc"
+          meta_path  = vault_dir/f"token_vault.{NS}.meta.json"
+          readme_path= vault_dir/"README.md"
+
+          # Decide whether to skip if vault exists and not rotating
+          if enc_path.exists() and not ROT:
+            # Produce summary JSON for step output (masked)
+            data = {
+              "result": "exists",
+              "namespace": NS,
+              "rotated": False
+            }
+            print(json.dumps(data, indent=2))
+            # also set a small marker file for later steps
+            (root/".github"/"autopatch_out").mkdir(parents=True, exist_ok=True)
+            (root/".github"/"autopatch_out"/"VAULT_EXISTS").write_text("true", encoding="utf-8")
+            sys.exit(0)
+
+          # Seed for encryption key derivation
+          # Prefer ADMIN_TOKEN; otherwise generate a random seed and embed a warning in meta
+          seed = ADMIN_TOKEN if ADMIN_TOKEN else base64.urlsafe_b64encode(secrets.token_bytes(32)).decode()
+          salt = secrets.token_bytes(16)
+          kdf = Scrypt(salt=salt, length=32, n=2**14, r=8, p=1)
+          key = kdf.derive(seed.encode())
+
+          # Generate fresh keys (rotate or create)
+          guardian_key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+          worker_key   = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+
+          payload = {
+            "version": 1,
+            "namespace": NS,
+            "created_utc": int(time.time()),
+            "guardian_key": guardian_key,
+            "worker_key": worker_key,
+          }
+
+          # Encrypt with AES-GCM
+          aes = AESGCM(key)
+          nonce = secrets.token_bytes(12)
+          ct = aes.encrypt(nonce, json.dumps(payload, separators=(',',':')).encode(), associated_data=NS.encode())
+
+          # Save encrypted blob + meta
+          enc_path.write_bytes(ct)
+          meta = {
+            "algo": "aes-256-gcm",
+            "kdf":  "scrypt(n=16384,r=8,p=1,len=32)",
+            "salt_b64": base64.b64encode(salt).decode(),
+            "nonce_b64": base64.b64encode(nonce).decode(),
+            "ns": NS,
+            "seed_source": "ADMIN_TOKEN" if ADMIN_TOKEN else "RANDOM",
+            "created_utc": int(time.time()),
+          }
+          meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
+
+          # Write README if absent
+          if not readme_path.exists():
+            readme_path.write_text(
+f"""# Token Vault (encrypted)
+
+This folder contains **encrypted** vault(s) for namespaces. Decrypt using the same seed used at bootstrap.
+
+- Encrypted blob: `token_vault.<ns>.enc`
+- Metadata: `token_vault.<ns>.meta.json`
+- Derivation: scrypt → AES-256-GCM
+
+## Decrypt locally
+
+```bash
+# prerequisites: python3 -m pip install cryptography
+python - <<'PY'
+import os, json, base64, sys, pathlib
+from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+ns = sys.argv[1] if len(sys.argv)>1 else "stegcore"
+seed = os.environ.get("ADMIN_TOKEN") or input("Enter seed (same as bootstrap ADMIN_TOKEN): ").strip()
+
+root = pathlib.Path(".github/vault")
+meta = json.loads((root/f"token_vault.{ns}.meta.json").read_text())
+enc  = (root/f"token_vault.{ns}.enc").read_bytes()
+
+salt  = base64.b64decode(meta["salt_b64"])
+nonce = base64.b64decode(meta["nonce_b64"])
+
+kdf = Scrypt(salt=salt, length=32, n=2**14, r=8, p=1)
+key = kdf.derive(seed.encode())
+
+plain = AESGCM(key).decrypt(nonce, enc, associated_data=ns.encode())
+print(plain.decode())
+PY
+
+Keep ADMIN_TOKEN safe; anyone with it and these files can decrypt.
+“””,
+encoding=“utf-8”
+)
+
+      # For the job summary (mask sensitive tails)
+      def mask_tail(s, keep=6):
+        return ("*" * max(0, len(s)-keep)) + s[-keep:]
+
+      summary = {
+        "result": "created" if not enc_path.exists() else "rotated",
+        "namespace": NS,
+        "rotated": True,
+        "guardian_key_tail": mask_tail(guardian_key),
+        "worker_key_tail": mask_tail(worker_key),
+        "seed_source": "ADMIN_TOKEN" if ADMIN_TOKEN else "RANDOM"
+      }
+
+      # Persist a machine-readable output for later steps
+      outd = pathlib.Path(".github/autopatch_out")
+      outd.mkdir(parents=True, exist_ok=True)
+      (outd/"VAULT_SUMMARY.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+
+      print(json.dumps(summary, indent=2))
+      PY
+
+  - name: Commit encrypted vault (if changed)
+    run: |
+      set -euo pipefail
+      git add .github/vault || true
+      if ! git diff --cached --quiet; then
+        git config user.name  "StegVerse Bot"
+        git config user.email "bot@stegverse.org"
+        git commit -m "chore(vault): bootstrap/rotate encrypted token vault for '${{ inputs.namespace }}'"
+        git push origin HEAD:main
+      else
+        echo "No vault changes to commit."
+
+  - name: Optional push to SCW Vault API
+    if: ${{ inputs.push_to_scw == true }}
+    env:
+      SCW_API_BASE: ${{ secrets.SCW_API_BASE || '' }}
+      SCW_ADMIN_TOKEN: ${{ secrets.SCW_ADMIN_TOKEN || '' }}
+    run: |
+      set -euo pipefail
+      if [ -z "${SCW_API_BASE}" ] || [ -z "${SCW_ADMIN_TOKEN}" ]; then
+        echo "SCW push skipped (missing SCW_API_BASE or SCW_ADMIN_TOKEN)."
+        exit 0
+      fi
+      # decrypt on the runner only for POST (never committed)
+      python - <<'PY'
+      import os, json, base64, pathlib, sys, subprocess, urllib.request
+
+      NS = os.environ["NS"]
+      root = pathlib.Path(".github/vault")
+      meta = json.loads((root/f"token_vault.{NS}.meta.json").read_text())
+      enc  = (root/f"token_vault.{NS}.enc").read_bytes()
+
+      # derive key
+      from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+      from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+      seed = os.environ.get("ADMIN_TOKEN","")
+      if not seed:
+        print("No ADMIN_TOKEN available; cannot push clear vault.", file=sys.stderr)
+        sys.exit(0)
+
+      salt  = base64.b64decode(meta["salt_b64"])
+      nonce = base64.b64decode(meta["nonce_b64"])
+      kdf = Scrypt(salt=salt, length=32, n=2**14, r=8, p=1)
+      key = kdf.derive(seed.encode())
+      plain = AESGCM(key).decrypt(nonce, enc, associated_data=NS.encode())
+      payload = json.loads(plain.decode())
+
+      base = os.environ["SCW_API_BASE"].rstrip("/")
+      tok  = os.environ["SCW_ADMIN_TOKEN"]
+      req  = urllib.request.Request(
+        f"{base}/v1/vault/put",
+        data=json.dumps({"namespace": NS, "data": payload}).encode(),
+        headers={"Content-Type":"application/json", "Authorization": f"Bearer {tok}"}
+      )
+      try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+          print("SCW push:", r.status, r.read().decode()[:200])
+      except Exception as e:
+        print("SCW push failed:", e, file=sys.stderr)
+        sys.exit(0)
+      PY
+
+  - name: Summary
+    if: always()
+    run: |
+      echo "## Token Vault Bootstrap" >> "$GITHUB_STEP_SUMMARY"
+      if [ -f ".github/autopatch_out/VAULT_SUMMARY.json" ]; then
+        cat ".github/autopatch_out/VAULT_SUMMARY.json" >> "$GITHUB_STEP_SUMMARY"
+      elif [ -f ".github/autopatch_out/VAULT_EXISTS" ]; then
+        echo '{"result":"exists"}' >> "$GITHUB_STEP_SUMMARY"
+      else
+        echo "_No summary generated._" >> "$GITHUB_STEP_SUMMARY"
