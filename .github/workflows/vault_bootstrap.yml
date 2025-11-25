@@ -62,20 +62,32 @@ print("BOOTSTRAP_COMPLETE")
 PY
 
       - name: Commit vault files
-        shell: bash
+        if: always()
         run: |
           set -euo pipefail
-          git config user.name "StegVerse Bot"
-          git config user.email "bot@stegverse.org"
-          git add .github/token_vault || true
-          if ! git diff --cached --quiet; then
-            git commit -m "vault: bootstrap SCW namespace"
+          if git status --porcelain .github/vault | grep .; then
+            git config user.name  "StegVerse Bot"
+            git config user.email "bot@stegverse.org"
+            git add .github/vault
+            git commit -m "chore(vault): bootstrap SCW token vault"
             git push origin HEAD:main
+          else
+            echo "No vault changes to commit."
           fi
 
       - name: Summary
         if: always()
         run: |
           echo "## Token Vault Bootstrap (SCW)" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Bootstrap completed. Vault files committed." >> "$GITHUB_STEP_SUMMARY"
+          if [ -f ".github/vault/SCW.bootstrap.status.json" ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat ".github/vault/SCW.bootstrap.status.json" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "> If **created: true**, copy **key** from the JSON above" >> "$GITHUB_STEP_SUMMARY"
+            echo "> and store it as repository secret **SCW_VAULT_FERNET_KEY**." >> "$GITHUB_STEP_SUMMARY"
+            echo "> After saving the secret, you can run the vault check and rotate workflows." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "_No status file produced; see logs for details._" >> "$GITHUB_STEP_SUMMARY"
