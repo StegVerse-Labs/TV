@@ -22,7 +22,9 @@ jobs:
           python-version: "3.11"
 
       - name: Install crypto deps
+        shell: bash
         run: |
+          set -euo pipefail
           python -m pip install --upgrade pip
           pip install cryptography
 
@@ -32,25 +34,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          NS="SCW"
-          VAULT=".github/token_vault/${NS}"
-          ENC="${VAULT}/${NS}.enc"
-          META="${VAULT}/${NS}.meta.json"
-          STATUS=".github/token_vault/${NS}.bootstrap.status.json"
-
-          mkdir -p "${VAULT}"
-
           python - <<'PY'
 import json
 from pathlib import Path
 from cryptography.fernet import Fernet
 
 ns = "SCW"
+
 vault_root = Path(".github") / "token_vault"
-vault_dir = vault_root / ns
-enc = vault_dir / f"{ns}.enc"
-meta = vault_dir / f"{ns}.meta.json"
-status = vault_root / f"{ns}.bootstrap.status.json"
+vault_dir  = vault_root / ns
+enc        = vault_dir / f"{ns}.enc"
+meta       = vault_dir / f"{ns}.meta.json"
+status     = vault_root / f"{ns}.bootstrap.status.json"
 
 vault_dir.mkdir(parents=True, exist_ok=True)
 
@@ -78,31 +73,32 @@ PY
 
       - name: Commit vault files
         if: always()
+        shell: bash
         run: |
           set -euo pipefail
-          if git status --porcelain .github/token_vault | grep .; then
+          if git status --porcelain .github/token_vault | grep . >/dev/null 2>&1; then
             git config user.name  "StegVerse Bot"
             git config user.email "bot@stegverse.org"
             git add .github/token_vault
-            git commit -m "chore(vault): bootstrap SCW token vault"
-            git push origin HEAD:main
+            git commit -m "chore(vault): bootstrap SCW token vault" || true
+            git push origin HEAD:main || true
           else
             echo "No vault changes to commit."
           fi
 
       - name: Summary
         if: always()
+        shell: bash
         run: |
+          set -euo pipefail
           echo "## Token Vault Bootstrap (SCW)" >> "$GITHUB_STEP_SUMMARY"
           echo "" >> "$GITHUB_STEP_SUMMARY"
           if [ -f ".github/token_vault/SCW.bootstrap.status.json" ]; then
-            echo '```json' >> "$GITHUB_STEP_SUMMARY"
             cat ".github/token_vault/SCW.bootstrap.status.json" >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
             echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "> If **created: true**, you may optionally copy **key** from the JSON above" >> "$GITHUB_STEP_SUMMARY"
-            echo "> and store it as repository secret **SCW_VAULT_FERNET_KEY**." >> "$GITHUB_STEP_SUMMARY"
-            echo "> After saving the secret, you can run the vault check and rotate workflows." >> "$GITHUB_STEP_SUMMARY"
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "If \"created\": true, you can copy \"key\" from the JSON above" >> "$GITHUB_STEP_SUMMARY"
+            echo "and store it as repository secret SCW_VAULT_FERNET_KEY." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "_No status file produced; see logs for details._" >> "$GITHUB_STEP_SUMMARY"
           fi
