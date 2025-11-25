@@ -105,3 +105,4 @@ PY
             echo "> After saving the secret, you can run the vault check and rotate workflows." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "_No status file produced; see logs for details._" >> "$GITHUB_STEP_SUMMARY"
+          fi
