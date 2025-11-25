@@ -1,0 +1,8 @@
+{
+  "namespace": "SCW",
+  "version": 1,
+  "created_utc": "2025-11-25T12:32:01Z",
+  "algorithm": "fernet",
+  "key_secret_name": "SCW_VAULT_FERNET_KEY",
+  "run_id": "19669606924"
+}

@@ -1,0 +1,8 @@
+{
+  "namespace": "SCW",
+  "created": true,
+  "enc_path": ".github/vault/SCW.enc",
+  "meta_path": ".github/vault/SCW.meta.json",
+  "key": "hggnHStAkR7hCxVgfPBPHPoYrJH55qoBK5bSQtTT_GI=",
+  "key_secret_name": "SCW_VAULT_FERNET_KEY"
+}
