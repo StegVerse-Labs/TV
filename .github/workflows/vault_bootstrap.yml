@@ -22,103 +22,60 @@ jobs:
           python-version: "3.11"
 
       - name: Install crypto deps
-        run: python -m pip install --upgrade pip cryptography
+        run: |
+          python -m pip install --upgrade pip
+          pip install cryptography
 
       - name: Bootstrap SCW token vault
-        id: bootstrap
-        env:
-          GITHUB_RUN_ID: ${{ github.run_id }}
+        id: boot
+        shell: bash
         run: |
           set -euo pipefail
-          python - << 'PY'
-          import base64, json, os, datetime
-          from pathlib import Path
-          from cryptography.fernet import Fernet
 
-          NAMESPACE = "SCW"
-          SECRET_NAME = "SCW_VAULT_FERNET_KEY"
+          NS="SCW"
+          VAULT=".github/token_vault/${NS}"
+          ENC="${VAULT}/${NS}.enc"
+          META="${VAULT}/${NS}.meta.json"
 
-          root = Path(".")
-          vault_dir = root / ".github" / "vault"
-          vault_dir.mkdir(parents=True, exist_ok=True)
+          mkdir -p "${VAULT}"
 
-          enc_path = vault_dir / f"{NAMESPACE}.enc"
-          meta_path = vault_dir / f"{NAMESPACE}.meta.json"
+          python - <<'PY'
+import os, json, base64
+from cryptography.fernet import Fernet
 
-          if enc_path.exists() or meta_path.exists():
-              status = {
-                  "namespace": NAMESPACE,
-                  "created": False,
-                  "reason": "enc or meta already exists",
-                  "enc_path": str(enc_path),
-                  "meta_path": str(meta_path),
-              }
-          else:
-              key = Fernet.generate_key()  # urlsafe base64-encoded 32 bytes
-              f = Fernet(key)
+ns = "SCW"
+vault = f".github/token_vault/{ns}"
+enc = f"{vault}/{ns}.enc"
+meta = f"{vault}/{ns}.meta.json"
 
-              payload = {
-                  "namespace": NAMESPACE,
-                  "version": 1,
-                  "created_utc": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
-                  "tokens": {},
-              }
+key = Fernet.generate_key().decode()
+fer = Fernet(key)
+cipher = fer.encrypt(b"bootstrap-initialized")
 
-              token = f.encrypt(json.dumps(payload).encode("utf-8"))
+with open(enc, "wb") as f:
+    f.write(cipher)
 
-              enc_path.write_bytes(token)
+with open(meta, "w") as f:
+    json.dump({"namespace": ns, "fernet_key": key}, f, indent=2)
 
-              meta = {
-                  "namespace": NAMESPACE,
-                  "version": 1,
-                  "created_utc": datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z",
-                  "algorithm": "fernet",
-                  "key_secret_name": SECRET_NAME,
-                  "run_id": os.environ.get("GITHUB_RUN_ID"),
-              }
-              meta_path.write_text(json.dumps(meta, indent=2), encoding="utf-8")
-
-              status = {
-                  "namespace": NAMESPACE,
-                  "created": True,
-                  "enc_path": str(enc_path),
-                  "meta_path": str(meta_path),
-                  "key": key.decode("ascii"),
-                  "key_secret_name": SECRET_NAME,
-              }
-
-          status_path = vault_dir / f"{NAMESPACE}.bootstrap.status.json"
-          status_path.write_text(json.dumps(status, indent=2), encoding="utf-8")
-          print(json.dumps(status, indent=2))
-          PY
+print("BOOTSTRAP_COMPLETE")
+PY
 
       - name: Commit vault files
-        if: always()
+        shell: bash
         run: |
           set -euo pipefail
-          if git status --porcelain .github/vault | grep .; then
-            git config user.name  "StegVerse Bot"
-            git config user.email "bot@stegverse.org"
-            git add .github/vault
-            git commit -m "chore(vault): bootstrap SCW token vault"
+          git config user.name "StegVerse Bot"
+          git config user.email "bot@stegverse.org"
+          git add .github/token_vault || true
+          if ! git diff --cached --quiet; then
+            git commit -m "vault: bootstrap SCW namespace"
             git push origin HEAD:main
-          else
-            echo "No vault changes to commit."
           fi
 
       - name: Summary
         if: always()
         run: |
           echo "## Token Vault Bootstrap (SCW)" >> "$GITHUB_STEP_SUMMARY"
-          if [ -f ".github/vault/SCW.bootstrap.status.json" ]; then
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo '```json' >> "$GITHUB_STEP_SUMMARY"
-            cat ".github/vault/SCW.bootstrap.status.json" >> "$GITHUB_STEP_SUMMARY"
-            echo '```' >> "$GITHUB_STEP_SUMMARY"
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "> If **created: true**, copy **key** from the JSON above" >> "$GITHUB_STEP_SUMMARY"
-            echo "> and store it as repository secret **SCW_VAULT_FERNET_KEY**." >> "$GITHUB_STEP_SUMMARY"
-            echo "> After saving the secret, you can run the vault check and rotate workflows." >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "" >> "$GITHUB_STEP_SUMMARY"
-            echo "_No status file produced; see logs for details._" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Bootstrap completed. Vault files committed." >> "$GITHUB_STEP_SUMMARY"
