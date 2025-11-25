@@ -1,0 +1,215 @@
+name: Token Vault Rotate
+
+on:
+  workflow_dispatch:
+    inputs:
+      namespace:
+        description: "Logical namespace (e.g. 'stegcore', 'stegtalk')"
+        required: true
+        default: "stegcore"
+      refresh_logical_keys:
+        description: "Also regenerate guardian/worker keys?"
+        required: true
+        type: boolean
+        default: false
+      push_to_scw:
+        description: "Push clear vault to SCW API (if SCW_* secrets set)?"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  rotate:
+    runs-on: ubuntu-latest
+    env:
+      NS: ${{ inputs.namespace }}
+      REFRESH_LOGICAL: ${{ inputs.refresh_logical_keys }}
+      PUSH_TO_SCW: ${{ inputs.push_to_scw }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install crypto deps
+        run: python -m pip install --upgrade pip cryptography
+
+      - name: Rotate vault encryption (and optionally logical keys)
+        id: rotate
+        shell: bash
+        env:
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN || '' }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os, json, base64, time, pathlib, sys, secrets
+          from pathlib import Path
+          from hashlib import sha256
+          from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+          from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+          NS   = os.environ["NS"]
+          REFRESH_LOGICAL = os.environ["REFRESH_LOGICAL"].lower() == "true"
+          ADMIN_TOKEN = os.environ.get("ADMIN_TOKEN","")
+          root = Path(".")
+          vault_dir = root/".github"/"vault"
+          enc_path  = vault_dir/f"token_vault.{NS}.enc"
+          meta_path = vault_dir/f"token_vault.{NS}.meta.json"
+
+          out_dir = root/".github"/"autopatch_out"
+          out_dir.mkdir(parents=True, exist_ok=True)
+
+          if not enc_path.exists() or not meta_path.exists():
+            summary = {
+              "result": "missing",
+              "namespace": NS,
+              "reason": "vault or meta missing"
+            }
+            (out_dir/"VAULT_ROTATE_SUMMARY.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+            print(json.dumps(summary, indent=2))
+            sys.exit(0)
+
+          if not ADMIN_TOKEN:
+            summary = {
+              "result": "skipped",
+              "namespace": NS,
+              "reason": "no ADMIN_TOKEN available for decryption"
+            }
+            (out_dir/"VAULT_ROTATE_SUMMARY.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+            print(json.dumps(summary, indent=2))
+            sys.exit(0)
+
+          meta = json.loads(meta_path.read_text(encoding="utf-8"))
+          enc  = enc_path.read_bytes()
+
+          salt  = base64.b64decode(meta["salt_b64"])
+          nonce = base64.b64decode(meta["nonce_b64"])
+
+          old_kdf = Scrypt(salt=salt, length=32, n=2**14, r=8, p=1)
+          old_key = old_kdf.derive(ADMIN_TOKEN.encode())
+
+          aes = AESGCM(old_key)
+          plain = aes.decrypt(nonce, enc, associated_data=NS.encode())
+          payload = json.loads(plain.decode())
+
+          # Optionally regenerate guardian/worker keys
+          if REFRESH_LOGICAL:
+            guardian_key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+            worker_key   = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+            payload["guardian_key"] = guardian_key
+            payload["worker_key"]   = worker_key
+          else:
+            guardian_key = payload.get("guardian_key","")
+            worker_key   = payload.get("worker_key","")
+
+          # New salt + key
+          new_salt = secrets.token_bytes(16)
+          new_kdf  = Scrypt(salt=new_salt, length=32, n=2**14, r=8, p=1)
+          new_key  = new_kdf.derive(ADMIN_TOKEN.encode())
+          new_nonce = secrets.token_bytes(12)
+
+          aes_new = AESGCM(new_key)
+          new_ct  = aes_new.encrypt(new_nonce, json.dumps(payload,separators=(',',':')).encode(), associated_data=NS.encode())
+
+          enc_path.write_bytes(new_ct)
+          new_meta = {
+            "algo": "aes-256-gcm",
+            "kdf":  "scrypt(n=16384,r=8,p=1,len=32)",
+            "salt_b64": base64.b64encode(new_salt).decode(),
+            "nonce_b64": base64.b64encode(new_nonce).decode(),
+            "ns": NS,
+            "seed_source": "ADMIN_TOKEN",
+            "rotated_utc": int(time.time()),
+            "refresh_logical_keys": REFRESH_LOGICAL,
+          }
+          meta_path.write_text(json.dumps(new_meta, indent=2) + "\n", encoding="utf-8")
+
+          def mask_tail(s, keep=6):
+            return ("*" * max(0, len(s)-keep)) + s[-keep:] if s else ""
+
+          summary = {
+            "result": "rotated",
+            "namespace": NS,
+            "refresh_logical_keys": REFRESH_LOGICAL,
+            "guardian_key_tail": mask_tail(guardian_key),
+            "worker_key_tail": mask_tail(worker_key),
+          }
+          (out_dir/"VAULT_ROTATE_SUMMARY.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+          print(json.dumps(summary, indent=2))
+          PY
+
+      - name: Commit rotated vault (if changed)
+        run: |
+          set -euo pipefail
+          git add .github/vault || true
+          if ! git diff --cached --quiet; then
+            git config user.name  "StegVerse Bot"
+            git config user.email "bot@stegverse.org"
+            git commit -m "chore(vault): rotate token vault for '${{ inputs.namespace }}'"
+            git push origin HEAD:main
+          else
+            echo "No vault changes to commit."
+
+      - name: Optional push rotated vault to SCW
+        if: ${{ inputs.push_to_scw == true }}
+        env:
+          NS: ${{ inputs.namespace }}
+          SCW_API_BASE: ${{ secrets.SCW_API_BASE || '' }}
+          SCW_ADMIN_TOKEN: ${{ secrets.SCW_ADMIN_TOKEN || '' }}
+          ADMIN_TOKEN: ${{ secrets.ADMIN_TOKEN || '' }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SCW_API_BASE}" ] || [ -z "${SCW_ADMIN_TOKEN}" ] || [ -z "${ADMIN_TOKEN}" ]; then
+            echo "SCW push skipped (missing SCW_API_BASE, SCW_ADMIN_TOKEN, or ADMIN_TOKEN)."
+            exit 0
+          fi
+          python - <<'PY'
+          import os, json, base64, pathlib, sys, urllib.request
+          from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+          from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+          NS = os.environ["NS"]
+          root = pathlib.Path(".github/vault")
+          meta = json.loads((root/f"token_vault.{NS}.meta.json").read_text())
+          enc  = (root/f"token_vault.{NS}.enc").read_bytes()
+          seed = os.environ["ADMIN_TOKEN"]
+
+          salt  = base64.b64decode(meta["salt_b64"])
+          nonce = base64.b64decode(meta["nonce_b64"])
+          kdf = Scrypt(salt=salt, length=32, n=2**14, r=8, p=1)
+          key = kdf.derive(seed.encode())
+          plain = AESGCM(key).decrypt(nonce, enc, associated_data=NS.encode())
+          payload = json.loads(plain.decode())
+
+          base = os.environ["SCW_API_BASE"].rstrip("/")
+          tok  = os.environ["SCW_ADMIN_TOKEN"]
+          req  = urllib.request.Request(
+            f"{base}/v1/vault/put",
+            data=json.dumps({"namespace": NS, "data": payload}).encode(),
+            headers={"Content-Type":"application/json","Authorization": f"Bearer {tok}"}
+          )
+          try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+              print("SCW push:", r.status, r.read().decode()[:200])
+          except Exception as e:
+            print("SCW push failed:", e, file=sys.stderr)
+            sys.exit(0)
+          PY
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Token Vault Rotate" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f ".github/autopatch_out/VAULT_ROTATE_SUMMARY.json" ]; then
+            cat ".github/autopatch_out/VAULT_ROTATE_SUMMARY.json" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "_No rotate summary written._" >> "$GITHUB_STEP_SUMMARY"
